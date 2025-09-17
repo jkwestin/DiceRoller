@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RPG Dice Roller</title>
+  <meta name="description" content="Lightweight RPG dice roller with advantage/disadvantage, modifiers, d6 special modes, persistent history, and light/dark theme toggle." />
+  <style>
+    :root {
+      --bg: #0f172a; --panel: #111827; --muted: #94a3b8; --text: #e5e7eb;
+      --accent: #22c55e; --accent-2: #60a5fa; --warn: #fbbf24; --bad: #ef4444; --good: #10b981;
+      --card: #0b1220; --border: #22304a; --shadow: 0 10px 25px rgba(0,0,0,.35); --radius: 16px;
+    }
+    body.light {
+      --bg: #f9fafb; --panel: #ffffff; --muted: #6b7280; --text: #111827;
+      --accent: #16a34a; --accent-2: #2563eb; --warn: #d97706; --bad: #dc2626; --good: #059669;
+      --card: #f3f4f6; --border: #d1d5db; --shadow: 0 2px 8px rgba(0,0,0,.1);
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui; background: var(--bg); color: var(--text); transition: background 0.3s, color 0.3s; }
+    .container { max-width: 1000px; margin: 0 auto; padding: 24px; }
+    header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+    .title { display:flex; align-items:center; gap:8px; font-weight:700; }
+    .theme-toggle { background: var(--panel); border:1px solid var(--border); border-radius:8px; padding:6px 10px; cursor:pointer; font-size:12px; }
+    .panel { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:16px; }
+    .controls { display:grid; grid-template-columns:repeat(12,1fr); gap:12px; align-items:end; }
+    .count-wrap{ display:grid; grid-template-columns:64px 1fr 64px; gap:8px; align-items:center; }
+    .big-btn{ font-weight:900; font-size:22px; padding:14px 0; border-radius:12px; cursor:pointer; }
+    .subpanel{ grid-column:span 12; border:1px dashed var(--border); background:var(--card); border-radius:12px; padding:10px 12px; margin-top:8px; }
+    button.roll{ background:linear-gradient(180deg,var(--accent-2),#1d4ed8); border:none; padding:10px 16px; border-radius:10px; cursor:pointer; font-weight:700; color:white; }
+    .results{ margin-top:18px; display:grid; gap:12px; }
+    .card{ background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px; }
+    .history-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+    .clear-btn{ background:var(--bad); border:none; padding:6px 10px; border-radius:8px; cursor:pointer; color:white; font-size:12px; }
+    .hist-item{ display:grid; grid-template-columns:120px 1fr auto; gap:8px; align-items:center; padding:8px 10px; border:1px solid var(--border); border-radius:10px; background:var(--panel); }
+    .meta{ color:var(--muted); font-size:12px; }
+    .summary{ font-family:ui-monospace; font-size:12px; }
+    .value{ font-weight:800; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="title"><span>🎲 RPG Dice Roller</span></div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="theme-toggle" id="themeToggle">Toggle Theme</button>
+        <div class="note">Persistent history</div>
+      </div>
+    </header>
+
+    <section class="panel controls">
+      <div class="grid-span-3">
+        <label for="die">Dice</label>
+        <select id="die"><option value="2">d2</option><option value="3">d3</option><option value="4">d4</option><option value="6" selected>d6</option><option value="8">d8</option><option value="10">d10</option><option value="12">d12</option><option value="20">d20</option><option value="100">d100</option></select>
+      </div>
+      <div class="grid-span-4">
+        <label for="count">Number of dice</label>
+        <div class="count-wrap">
+          <button type="button" class="big-btn" id="decr">–</button>
+          <input id="count" type="number" min="1" max="20" step="1" value="1" />
+          <button type="button" class="big-btn" id="incr">+</button>
+        </div>
+      </div>
+
+      <div class="subpanel">
+        <label>Mode</label>
+        <div class="mode" role="radiogroup">
+          <div class="mode-item" data-mode="normal" data-active="true"><input type="radio" name="mode" value="normal" checked /> Normal</div>
+          <div class="mode-item" data-mode="adv"><input type="radio" name="mode" value="adv"/> Advantage</div>
+          <div class="mode-item" data-mode="dis"><input type="radio" name="mode" value="dis"/> Disadvantage</div>
+        </div>
+      </div>
+
+      <div class="grid-span-7">
+        <label for="d6mode">d6 Special</label>
+        <select id="d6mode"><option value="none">None</option><option value="explode">Exploding 6s</option><option value="reroll1">Reroll 1s (once)</option><option value="count6">Count 6s</option></select>
+      </div>
+      <div class="grid-span-5">
+        <label for="modifier">Modifier</label>
+        <input id="modifier" type="number" value="0" />
+      </div>
+
+      <div class="grid-span-12"><button class="roll" id="rollBtn">Roll (Enter)</button></div>
+    </section>
+
+    <section class="results">
+      <div class="card" id="currentCard" hidden>
+        <h3 id="currentTitle">Result</h3>
+        <div id="attempts"></div>
+        <div class="final"><span id="modifierText"></span><span id="finalTotal"></span></div>
+      </div>
+
+      <div class="card">
+        <div class="history-header">
+          <h3>History</h3>
+          <button class="clear-btn" id="clearHistory">Clear</button>
+        </div>
+        <div id="history"></div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const $ = s=>document.querySelector(s);
+    const supportedFaces=new Set([2,3,4,6,8,10,12,20,100]);
+    function clamp(n,min,max){return Math.max(min,Math.min(max,n));}
+    const RNG={randInt(max){return Math.floor(Math.random()*max)+1;}};
+
+    const state={faces:6,count:1,mode:'normal',modifier:0,d6mode:'none',history:[]};
+
+    const dieSel=$('#die'),countInput=$('#count'),modifierInput=$('#modifier'),d6modeSel=$('#d6mode');
+    const rollBtn=$('#rollBtn'),historyEl=$('#history'),clearBtn=$('#clearHistory');
+    const currentCard=$('#currentCard'),currentTitle=$('#currentTitle'),attemptsEl=$('#attempts'),modifierText=$('#modifierText'),finalTotal=$('#finalTotal');
+    const themeToggle=$('#themeToggle');
+
+    function loadHistory(){ try{const h=JSON.parse(localStorage.getItem('diceHistory')||'[]'); if(Array.isArray(h)) state.history=h;}catch{} }
+    function saveHistory(){localStorage.setItem('diceHistory',JSON.stringify(state.history));}
+    function clearHistory(){state.history=[];saveHistory();renderHistory();}
+
+    function loadTheme(){const t=localStorage.getItem('theme')||'dark';if(t==='light'){document.body.classList.add('light');}}
+    function toggleTheme(){document.body.classList.toggle('light');localStorage.setItem('theme',document.body.classList.contains('light')?'light':'dark');}
+
+    function readControls(){state.faces=parseInt(dieSel.value);state.count=clamp(parseInt(countInput.value),1,20);state.modifier=parseInt(modifierInput.value)||0;state.d6mode=d6modeSel.value;}
+    function basicRoll(faces,count){const r=[];for(let i=0;i<count;i++)r.push(RNG.randInt(faces));return{rolls:r,sum:r.reduce((a,b)=>a+b,0)};}
+    function rollOnce(){if(state.faces===6){if(state.d6mode==='count6'){let succ=0;let r=[];for(let i=0;i<state.count;i++){let v=RNG.randInt(6);r.push(v);if(v===6)succ++;}return{rolls:r,sum:succ};}if(state.d6mode==='reroll1'){let r=[],s=0;for(let i=0;i<state.count;i++){let v=RNG.randInt(6);if(v===1){let v2=RNG.randInt(6);r.push(`(1→${v2})`);s+=v2;}else{r.push(v);s+=v;}}return{rolls:r,sum:s};}if(state.d6mode==='explode'){let r=[],s=0;for(let i=0;i<state.count;i++){let v=RNG.randInt(6);r.push(v===6?'6!':v);s+=v;while(v===6){v=RNG.randInt(6);r.push(v===6?'6!':v);s+=v;}}return{rolls:r,sum:s};}}return basicRoll(state.faces,state.count);}
+    function performRoll(){readControls();let attempts=[];if(state.mode==='normal'){const a=rollOnce();attempts=[{...a,kept:true}];var kept=a.sum;}else{const a=rollOnce(),b=rollOnce();const keepA=state.mode==='adv'?a.sum>=b.sum:a.sum<=b.sum;attempts=[{...a,kept:keepA},{...b,kept:!keepA}];var kept=keepA?a.sum:b.sum;}const final=kept+state.modifier;renderCurrent(attempts,final);state.history.unshift({time:Date.now(),label:`${state.count}d${state.faces}`,final,attempts});if(state.history.length>20)state.history.length=20;saveHistory();renderHistory();}
+
+    function renderCurrent(attempts,final){currentTitle.textContent='Result';attemptsEl.innerHTML='';attempts.forEach(a=>{let d=document.createElement('div');d.textContent=`[${a.rolls}] sum=${a.sum}${a.kept?' (kept)':''}`;attemptsEl.appendChild(d);});modifierText.textContent=`Modifier ${state.modifier}`;finalTotal.textContent=`Total ${final}`;currentCard.hidden=false;}
+    function renderHistory(){historyEl.innerHTML='';if(!state.history.length){historyEl.textContent='No rolls yet';return;}state.history.forEach(h=>{let row=document.createElement('div');row.className='hist-item';let time=new Date(h.time);row.innerHTML=`<div class='meta'>${time.toLocaleTimeString()}</div><div class='summary'>${h.label}</div><div class='value'>${h.final}</div>`;historyEl.appendChild(row);});}
+
+    rollBtn.onclick=performRoll;clearBtn.onclick=clearHistory;themeToggle.onclick=toggleTheme;
+    $('#decr').onclick=()=>{countInput.value=clamp(parseInt(countInput.value)-1,1,20);};
+    $('#incr').onclick=()=>{countInput.value=clamp(parseInt(countInput.value)+1,1,20);};
+    document.addEventListener('keydown',e=>{if(e.key==='Enter')performRoll();});
+
+    loadTheme();
+    loadHistory();
+    renderHistory();
+  </script>
+</body>
+</html>
+
+
