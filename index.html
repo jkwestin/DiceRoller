@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en">
+<!DOCTYPE html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -7,14 +8,14 @@
     body { font-family: system-ui; background: #0f172a; color: #e5e7eb; margin:0; padding:0.5rem; }
     header { margin-bottom:0.5rem; font-size:18px; }
     .btn { background:#2563eb; color:white; border:none; padding:10px 14px; border-radius:6px; cursor:pointer; font-size:16px; margin:2px; }
+    .btn.ghost { background:#0b1730; border:1px solid #334155; }
     .row { display:flex; flex-wrap:wrap; margin-bottom:8px; gap:6px; align-items:center; }
-    .count-control { display:flex; align-items:center; }
-    .count-control button { font-size:20px; padding:8px 12px; margin:0 4px; }
+    .count-control, .mod-control { display:flex; align-items:center; }
+    .count-control button, .mod-control button { font-size:20px; padding:8px 12px; margin:0 4px; }
     .count-display { font-size:18px; min-width:140px; text-align:center; background:#1e293b; border-radius:6px; padding:8px 10px; border:1px solid #334155; }
     .card { background:#1e293b; padding:10px; border-radius:6px; margin-top:0.5rem; }
     .history-item { border-bottom:1px solid #334155; padding:4px 0; font-size:14px; }
-    .kept { color:#22c55e; font-weight:bold; }
-    input[type=number] { padding:6px; border-radius:4px; border:none; font-size:16px; }
+    input[type=number] { padding:6px; border-radius:4px; border:none; font-size:16px; width:100px; }
     #settings { margin:6px 0; font-size:14px; color:#a3e635; }
     .roll-low { color:#ef4444; }
     .roll-mid { color:#eab308; }
@@ -23,12 +24,19 @@
     @media (max-width:600px){
       .btn { font-size:14px; padding:8px 10px; }
       .count-display { min-width:120px; }
+      input[type=number] { width:90px; }
     }
   </style>
 </head>
 <body>
 <div class="container">
-  <header>🎲 RPG Dice Roller</header>  <!-- Dice selection row -->  <div class="row" id="diceRow"></div>  <!-- Count row -->  <div class="row">
+  <header>🎲 RPG Dice Roller</header>
+
+  <!-- Dice selection row -->
+  <div class="row" id="diceRow"></div>
+
+  <!-- Count row -->
+  <div class="row">
     <label>Count (0=Adv, -1=Dis):</label>
     <div class="count-control">
       <button id="decrCount" class="btn">–</button>
@@ -36,20 +44,38 @@
       <input id="count" type="hidden" value="1" />
       <button id="incrCount" class="btn">+</button>
     </div>
-  </div>  <div class="row">
+  </div>
+
+  <!-- Modifier row with +/- buttons -->
+  <div class="row">
     <label>Modifier:</label>
-    <input id="modifier" type="number" value="0" style="width:100px;" />
-  </div>  <div class="row">
+    <div class="mod-control">
+      <button id="decrMod" class="btn ghost">–</button>
+      <input id="modifier" type="number" value="0" />
+      <button id="incrMod" class="btn ghost">+</button>
+    </div>
+  </div>
+
+  <div class="row">
     <button id="rollBtn" class="btn">Roll</button>
-  </div>  <div id="settings"></div>  <section class="card" id="currentCard" hidden>
+  </div>
+
+  <div id="settings"></div>
+
+  <section class="card" id="currentCard" hidden>
     <h3>Result <span id="modeBadge" class="mode-label"></span></h3>
     <div id="attempts"></div>
     <div id="final"></div>
-  </section>  <section class="card">
+  </section>
+
+  <section class="card">
     <h3>History <button id="clearHistory" class="btn small">Clear</button></h3>
     <div id="history"></div>
   </section>
-</div><script>
+</div>
+
+<script>
+const STORAGE_KEY='rpg_dice_history_v2';
 const diceFaces=[2,3,4,6,8,10,12,20,100];
 const diceRow=document.getElementById('diceRow');
 diceFaces.forEach(f=>{
@@ -74,9 +100,11 @@ function colorizeRoll(value,faces){
 }
 
 function performRoll(){
-  // read latest
-  state.count=parseInt(document.getElementById('count').value);
-  state.modifier=parseInt(modifier.value);
+  // read latest safely (do NOT coerce 0/-1 to 1)
+  const rawCnt = parseInt(document.getElementById('count').value);
+  state.count = Number.isNaN(rawCnt) ? 1 : rawCnt;
+  const rawMod = parseInt(modifier.value);
+  state.modifier = Number.isNaN(rawMod) ? 0 : rawMod;
 
   function oneRoll(numDice){
     const n = Math.max(1, numDice|0);
@@ -85,27 +113,33 @@ function performRoll(){
     return {rolls,sum};
   }
 
-  let attempts=[];
+  let attempt;
   if(state.count>0){
     const a=oneRoll(state.count);
-    attempts=[{...a,kept:true}];
+    attempt={ rolls:a.rolls, sum:a.sum, mode:'normal' };
     state.mode='normal';
   } else if(state.count===0){
-    const a=oneRoll(1), b=oneRoll(1);
-    const keep=(a.sum>=b.sum);
-    attempts=[{...a,kept:keep},{...b,kept:!keep}];
+    // Advantage: 1 die twice -> keep max
+    const r1=basicRoll(state.faces,1)[0];
+    const r2=basicRoll(state.faces,1)[0];
+    attempt={ rolls:[r1,r2], sum:Math.max(r1,r2), mode:'adv' };
     state.mode='adv';
   } else if(state.count===-1){
-    const a=oneRoll(1), b=oneRoll(1);
-    const keep=(a.sum<=b.sum);
-    attempts=[{...a,kept:keep},{...b,kept:!keep}];
+    // Disadvantage: 1 die twice -> keep min
+    const r1=basicRoll(state.faces,1)[0];
+    const r2=basicRoll(state.faces,1)[0];
+    attempt={ rolls:[r1,r2], sum:Math.min(r1,r2), mode:'dis' };
     state.mode='dis';
+  } else {
+    const a=oneRoll(1);
+    attempt={ rolls:a.rolls, sum:a.sum, mode:'normal' };
+    state.mode='normal';
   }
 
-  const kept=attempts.find(x=>x.kept);
-  const final=kept.sum+state.modifier;
-  renderCurrent(attempts,final);
-  state.history.unshift({t:Date.now(),attempts,final,mode:state.mode,faces:state.faces});
+  const final=attempt.sum + state.modifier;
+  renderCurrent([attempt], final);
+  state.history.unshift({t:Date.now(), attempt, final, faces:state.faces});
+  saveHistory();
   renderHistory();
 }
 
@@ -115,14 +149,17 @@ function renderCurrent(attempts,final){
   const finalDiv=document.getElementById('final');
   const badge=document.getElementById('modeBadge');
   attemptsEl.innerHTML='';
-  attempts.forEach(a=>{
-    const div=document.createElement('div');
-    div.className='history-item';
-    const colored=a.rolls.map(r=>colorizeRoll(r,state.faces)).join(', ');
-    div.innerHTML=`<span>[${colored}]</span> ⇒ <strong>${a.sum}</strong>${a.kept?' <span class="kept">(kept)</span>':''}`;
-    attemptsEl.appendChild(div);
-  });
-  badge.textContent = state.mode==='adv' ? 'Advantage' : state.mode==='dis' ? 'Disadvantage' : '';
+
+  const a=attempts[0];
+  const colored=a.rolls.map(r=>colorizeRoll(r,state.faces)).join(', ');
+  const arrowResult = (a.mode==='adv' || a.mode==='dis') ? ` → <strong>${a.sum}</strong>` : ' ⇒ <strong>'+a.sum+'</strong>';
+  const line = `<span>[${colored}]</span>${arrowResult}`;
+  const div=document.createElement('div');
+  div.className='history-item';
+  div.innerHTML=line;
+  attemptsEl.appendChild(div);
+
+  badge.textContent = a.mode==='adv' ? 'Advantage' : a.mode==='dis' ? 'Disadvantage' : '';
   finalDiv.textContent='Total: '+final;
   updateSettings();
 }
@@ -134,15 +171,18 @@ function renderHistory(){
     const div=document.createElement('div');
     div.className='history-item';
     const time=new Date(h.t).toLocaleTimeString();
-    const modeLabel = h.mode==='adv'?'<span class="mode-label">Advantage</span>':h.mode==='dis'?'<span class="mode-label">Disadvantage</span>':"";
-    const allRolls=h.attempts.map(a=>`[${a.rolls.map(r=>colorizeRoll(r,h.faces)).join(', ')}] ⇒ ${a.sum}${a.kept?' (kept)':''}`).join('<br/>');
-    div.innerHTML=`${time} ${modeLabel}<br/>${allRolls}<br/><strong>Total: ${h.final}</strong>`;
+    const a=h.attempt;
+    const colored=a.rolls.map(r=>colorizeRoll(r,h.faces)).join(', ');
+    const arrowResult = (a.mode==='adv' || a.mode==='dis') ? ` → <strong>${a.sum}</strong>` : ` ⇒ <strong>${a.sum}</strong>`;
+    const modeLabel = a.mode==='adv' ? ' <span class="mode-label">Advantage</span>' : a.mode==='dis' ? ' <span class="mode-label">Disadvantage</span>' : '';
+    div.innerHTML=`${time}${modeLabel}<br/>[${colored}]${arrowResult}  |  Total: <strong>${h.final}</strong>`;
     historyEl.appendChild(div);
   });
 }
 
 function updateCountDisplay(){
-  const cnt = parseInt(document.getElementById('count').value);
+  const raw = parseInt(document.getElementById('count').value);
+  const cnt = Number.isNaN(raw) ? 1 : raw;
   const disp = document.getElementById('countDisplay');
   if (cnt===0) disp.textContent='Advantage';
   else if (cnt===-1) disp.textContent='Disadvantage';
@@ -150,38 +190,59 @@ function updateCountDisplay(){
 }
 
 function updateSettings(){
-  const cnt=parseInt(document.getElementById('count').value)||1;
-  state.count=cnt;
+  const cntRaw = parseInt(document.getElementById('count').value);
+  const cnt = Number.isNaN(cntRaw) ? 1 : cntRaw;
+  state.count = cnt;
+  const modRaw = parseInt(modifier.value);
+  state.modifier = Number.isNaN(modRaw) ? 0 : modRaw;
   updateCountDisplay();
   const modTxt = state.modifier===0 ? '' : (state.modifier>0?`+${state.modifier}`:`${state.modifier}`);
-  const dicePart = (cnt>0? cnt : 1) + 'd' + state.faces;
+  let dicePart = (cnt>0? cnt : 1) + 'd' + state.faces;
+  if(cnt===0) dicePart = 'Adv d'+state.faces;
+  if(cnt===-1) dicePart = 'Dis d'+state.faces;
   document.getElementById('settings').textContent = `Current: ${dicePart}${modTxt}`;
+}
+
+function saveHistory(){
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state.history)); }catch{}
+}
+function loadHistory(){
+  try{ const raw=localStorage.getItem(STORAGE_KEY); if(raw){ const arr=JSON.parse(raw); if(Array.isArray(arr)) state.history=arr; } }catch{}
+}
+function clearSavedHistory(){
+  try{ localStorage.removeItem(STORAGE_KEY); }catch{}
 }
 
 // UI wiring
 rollBtn.onclick=performRoll;
-clearHistory.onclick=()=>{if(confirm('Clear history?')){state.history=[];renderHistory();}};
+clearHistory.onclick=()=>{ if(confirm('Clear history?')){ state.history=[]; clearSavedHistory(); renderHistory(); } };
 
 decrCount.onclick=()=>{
   const hidden=document.getElementById('count');
-  let v=parseInt(hidden.value)||1;
-  if (v> -1) { v = v-1; } // 1->0, 0->-1, stop at -1
-  else { v = -1; }
+  let v = parseInt(hidden.value);
+  if (Number.isNaN(v)) v = 1;
+  v = Math.max(-1, v - 1);               // 2->1, 1->0 (Adv), 0->-1 (Dis), -1 stays -1
   hidden.value = v; updateSettings();
 };
 
 incrCount.onclick=()=>{
   const hidden=document.getElementById('count');
-  let v=parseInt(hidden.value)||1;
-  if (v<0) { v = 0; } // -1 -> 0
-  else if (v<20) { v = v+1; } // 0 -> 1, 1..19 -> +1
+  let v = parseInt(hidden.value);
+  if (Number.isNaN(v)) v = 1;
+  if (v < 0) v = 0;                       // Dis -> Adv
+  else v = Math.min(20, v + 1);           // Adv -> 1, then 2..20
   hidden.value = v; updateSettings();
 };
 
-// Live updates
-modifier.addEventListener('input', ()=>{ state.modifier=parseInt(modifier.value)||0; updateSettings(); });
+// Modifier +/-
+decrMod.onclick=()=>{ const v=parseInt(modifier.value); modifier.value = (Number.isNaN(v)?0:v) - 1; updateSettings(); };
+incrMod.onclick=()=>{ const v=parseInt(modifier.value); modifier.value = (Number.isNaN(v)?0:v) + 1; updateSettings(); };
+modifier.addEventListener('input', updateSettings);
 
-// Build dice buttons
+// Init
+loadHistory();
+renderHistory();
 updateSettings();
-</script></body>
+</script>
+</body>
 </html>
