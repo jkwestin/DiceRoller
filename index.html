@@ -1,111 +1,132 @@
-<!DOCTYPE html><html lang="en">
+<!DOCTYPE html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>RPG Dice Roller</title>
   <style>
     body { font-family: system-ui; background: #0f172a; color: #e5e7eb; margin:0; padding:0.5rem; }
-    header { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; margin-bottom:0.5rem; }
-    .btn { background:#2563eb; color:white; border:none; padding:10px 14px; border-radius:6px; cursor:pointer; font-size:16px; margin:2px; flex:1; }
-    .btn.small { font-size:12px; padding:6px 8px; flex:unset; }
-    .row { display:flex; flex-wrap:wrap; margin-bottom:8px; gap:4px; }
-    .row label { margin-right:4px; }
+    header { margin-bottom:0.5rem; font-size:18px; }
+    .btn { background:#2563eb; color:white; border:none; padding:10px 14px; border-radius:6px; cursor:pointer; font-size:16px; margin:2px; }
+    .row { display:flex; flex-wrap:wrap; margin-bottom:8px; gap:4px; align-items:center; }
     .count-control { display:flex; align-items:center; }
     .count-control button { font-size:20px; padding:8px 12px; margin:0 4px; }
-    .count-control input { font-size:18px; width:60px; text-align:center; }
+    .count-control input { font-size:18px; width:70px; text-align:center; }
     .card { background:#1e293b; padding:10px; border-radius:6px; margin-top:0.5rem; }
     .history-item { border-bottom:1px solid #334155; padding:4px 0; font-size:14px; }
     .kept { color:#22c55e; font-weight:bold; }
-    input[type=number], input[type=text] { padding:6px; border-radius:4px; border:none; font-size:16px; }
+    input[type=number] { padding:6px; border-radius:4px; border:none; font-size:16px; }
+    #settings { margin:6px 0; font-size:14px; color:#a3e635; }
+    .roll-low { color:#ef4444; }
+    .roll-mid { color:#eab308; }
+    .roll-high { color:#22c55e; }
+    .mode-label { font-weight:bold; color:#38bdf8; margin-right:6px; }
     @media (max-width:600px){
       .btn { font-size:14px; padding:8px 10px; }
-      .count-control input { width:50px; }
-      header { flex-direction:column; align-items:flex-start; gap:4px; }
+      .count-control input { width:60px; }
     }
   </style>
 </head>
 <body>
 <div class="container">
-  <header>
-    <span style="font-size:18px;">🎲 RPG Dice Roller</span>
-    <div>
-      <button id="shareBtn" class="btn small">Share</button>
-      <button id="rollBtn" class="btn">Roll</button>
-    </div>
-  </header>  <!-- Dice selection row -->  <div class="row" id="diceRow"></div>  <!-- Count row -->  <div class="row">
-    <label>Count:</label>
+  <header>🎲 RPG Dice Roller</header>
+
+  <!-- Dice selection row -->
+  <div class="row" id="diceRow"></div>
+
+  <!-- Count row -->
+  <div class="row">
+    <label>Count (0=Adv, -1=Dis):</label>
     <div class="count-control">
       <button id="decrCount" class="btn">–</button>
-      <input id="count" type="number" min="1" max="20" value="1" />
+      <input id="count" type="number" min="-1" max="20" value="1" />
       <button id="incrCount" class="btn">+</button>
     </div>
-  </div>  <!-- Special settings row -->  <div class="row">
-    <button id="advBtn" class="btn">Advantage</button>
-    <button id="disBtn" class="btn">Disadvantage</button>
+  </div>
+
+  <div class="row">
     <label>Modifier:</label>
     <input id="modifier" type="number" value="0" style="width:70px;" />
     <label>Success ≥</label>
     <input id="successTarget" type="number" min="0" max="100" value="0" style="width:70px;" />
-    <label>Count Max</label>
-    <input id="countMax" type="checkbox" />
-  </div>  <section class="card" id="currentCard" hidden>
+  </div>
+
+  <div class="row">
+    <button id="rollBtn" class="btn">Roll</button>
+  </div>
+
+  <div id="settings"></div>
+
+  <section class="card" id="currentCard" hidden>
     <h3>Result</h3>
     <div id="attempts"></div>
     <div id="final"></div>
-  </section>  <section class="card">
+  </section>
+
+  <section class="card">
     <h3>History <button id="clearHistory" class="btn small">Clear</button></h3>
     <div id="history"></div>
   </section>
-</div><script>
+</div>
+
+<script>
 const diceFaces=[2,3,4,6,8,10,12,20,100];
 const diceRow=document.getElementById('diceRow');
 diceFaces.forEach(f=>{
   let b=document.createElement('button');
   b.textContent='d'+f;
   b.className='btn';
-  b.onclick=()=>{state.faces=f;};
+  b.onclick=()=>{state.faces=f;updateSettings();};
   diceRow.appendChild(b);
 });
 
-const state={faces:6,count:1,modifier:0,successTarget:0,countMax:false,mode:'normal',history:[]};
+const state={faces:6,count:1,modifier:0,successTarget:0,mode:'normal',history:[]};
 
 function randInt(max){return Math.floor(Math.random()*max)+1;}
 function basicRoll(faces,count){let rolls=[];for(let i=0;i<count;i++)rolls.push(randInt(faces));return rolls;}
+
+function colorizeRoll(value,faces){
+  if(value===1) return `<span class="roll-low">${value}</span>`;
+  if(value===faces) return `<span class="roll-high">${value}</span>`;
+  if(value<=Math.ceil(faces/3)) return `<span class="roll-low">${value}</span>`;
+  if(value>=Math.floor(2*faces/3)) return `<span class="roll-high">${value}</span>`;
+  return `<span class="roll-mid">${value}</span>`;
+}
 
 function performRoll(){
   state.count=parseInt(count.value);
   state.modifier=parseInt(modifier.value);
   state.successTarget=parseInt(successTarget.value);
-  state.countMax=document.getElementById('countMax').checked;
 
   function oneRoll(){
-    let rolls=basicRoll(state.faces,state.count);
+    let rolls=basicRoll(state.faces,Math.abs(state.count));
     let sum=rolls.reduce((a,b)=>a+b,0);
     let info="";
     if(state.successTarget>0){ sum=rolls.filter(r=>r>=state.successTarget).length; info=`Successes (≥${state.successTarget})`; }
-    if(state.countMax){
-      const cnt=rolls.filter(r=>r===state.faces).length;
-      info=`Max rolls (${state.faces}) counted: ${cnt}`;
-      return {rolls,sum:sum,info,extra:cnt};
-    }
     return {rolls,sum,info};
   }
 
   let attempts=[];
-  if(state.mode==='normal'){
+  if(state.count>0){
     const a=oneRoll();
     attempts=[{...a,kept:true}];
-  } else {
-    const a=oneRoll();
-    const b=oneRoll();
-    const keep=(state.mode==='adv')?(a.sum>=b.sum):(a.sum<=b.sum);
+    state.mode='normal';
+  } else if(state.count===0){
+    const a=oneRoll(); const b=oneRoll();
+    const keep=(a.sum>=b.sum);
     attempts=[{...a,kept:keep},{...b,kept:!keep}];
+    state.mode='adv';
+  } else if(state.count===-1){
+    const a=oneRoll(); const b=oneRoll();
+    const keep=(a.sum<=b.sum);
+    attempts=[{...a,kept:keep},{...b,kept:!keep}];
+    state.mode='dis';
   }
 
   let kept=attempts.find(x=>x.kept);
   let final=kept.sum+state.modifier;
   renderCurrent(attempts,final);
-  state.history.unshift({t:Date.now(),attempts,final});
+  state.history.unshift({t:Date.now(),attempts,final,mode:state.mode});
   renderHistory();
 }
 
@@ -117,11 +138,14 @@ function renderCurrent(attempts,final){
   attempts.forEach(a=>{
     let div=document.createElement('div');
     div.className='history-item';
+    const colored=a.rolls.map(r=>colorizeRoll(r,state.faces)).join(', ');
     let info=a.info?` <em>${a.info}</em>`:"";
-    div.innerHTML=`<span>[${a.rolls.join(', ')}]</span> ⇒ <strong>${a.sum}</strong>${a.kept?' <span class="kept">(kept)</span>':''}${info}`;
+    div.innerHTML=`<span>[${colored}]</span> ⇒ <strong>${a.sum}</strong>${a.kept?' <span class="kept">(kept)</span>':''}${info}`;
     attemptsEl.appendChild(div);
   });
-  finalDiv.textContent='Total: '+final;
+  const modeLabel = state.mode==='adv'?' (Advantage)':state.mode==='dis'?' (Disadvantage)':'';
+  finalDiv.textContent='Total: '+final+modeLabel;
+  updateSettings();
 }
 
 function renderHistory(){
@@ -131,20 +155,33 @@ function renderHistory(){
     let div=document.createElement('div');
     div.className='history-item';
     const time=new Date(h.t).toLocaleTimeString();
-    const kept=h.attempts.find(a=>a.kept);
-    let info=kept.info?` <em>${kept.info}</em>`:"";
-    div.innerHTML=`${time} ⇒ [${kept.rolls.join(', ')}] = <strong>${h.final}</strong>${info}`;
+    const modeLabel = h.mode==='adv'?'<span class="mode-label">Advantage</span>':h.mode==='dis'?'<span class="mode-label">Disadvantage</span>':"";
+    const allRolls=h.attempts.map(a=>`[${a.rolls.map(r=>colorizeRoll(r,state.faces)).join(', ')}] ⇒ ${a.sum}${a.kept?' (kept)':''}`).join('<br/>');
+    div.innerHTML=`${time} ${modeLabel}<br/>${allRolls}<br/><strong>Total: ${h.final}</strong>`;
     historyEl.appendChild(div);
   });
 }
 
-rollBtn.onclick=performRoll;
-advBtn.onclick=()=>{state.mode='adv'; count.value=1;};
-disBtn.onclick=()=>{state.mode='dis'; count.value=1;};
-clearHistory.onclick=()=>{if(confirm('Clear history?')){state.history=[];renderHistory();}};
-shareBtn.onclick=()=>{const url=new URL(location);url.searchParams.set('dice',state.faces);url.searchParams.set('count',state.count);navigator.clipboard.writeText(url).then(()=>alert('Link copied!'));};
+function updateSettings(){
+  state.count=parseInt(count.value);
+  state.modifier=parseInt(modifier.value);
+  state.successTarget=parseInt(successTarget.value);
+  let modeTxt="Normal";
+  if(state.count===0) modeTxt="Advantage";
+  else if(state.count===-1) modeTxt="Disadvantage";
+  document.getElementById('settings').textContent=`Current: d${state.faces}, Count=${state.count}, Mode=${modeTxt}, Modifier=${state.modifier}, Success≥${state.successTarget}`;
+}
 
-decrCount.onclick=()=>{let v=parseInt(count.value)||1;if(v>1){count.value=v-1;}};
-incrCount.onclick=()=>{let v=parseInt(count.value)||1;if(v<20){count.value=v+1;}};
-</script></body>
+rollBtn.onclick=performRoll;
+clearHistory.onclick=()=>{if(confirm('Clear history?')){state.history=[];renderHistory();}};
+decrCount.onclick=()=>{let v=parseInt(count.value)||1; if(v>-1){count.value=v-1;} updateSettings();};
+incrCount.onclick=()=>{let v=parseInt(count.value)||1; if(v<20){count.value=v+1;} updateSettings();};
+
+[count,modifier,successTarget].forEach(el=>{
+  el.addEventListener('input',updateSettings);
+});
+
+updateSettings();
+</script>
+</body>
 </html>
