@@ -7,10 +7,10 @@
     body { font-family: system-ui; background: #0f172a; color: #e5e7eb; margin:0; padding:0.5rem; }
     header { margin-bottom:0.5rem; font-size:18px; }
     .btn { background:#2563eb; color:white; border:none; padding:10px 14px; border-radius:6px; cursor:pointer; font-size:16px; margin:2px; }
-    .row { display:flex; flex-wrap:wrap; margin-bottom:8px; gap:4px; align-items:center; }
+    .row { display:flex; flex-wrap:wrap; margin-bottom:8px; gap:6px; align-items:center; }
     .count-control { display:flex; align-items:center; }
     .count-control button { font-size:20px; padding:8px 12px; margin:0 4px; }
-    .count-control input { font-size:18px; width:70px; text-align:center; }
+    .count-display { font-size:18px; min-width:140px; text-align:center; background:#1e293b; border-radius:6px; padding:8px 10px; border:1px solid #334155; }
     .card { background:#1e293b; padding:10px; border-radius:6px; margin-top:0.5rem; }
     .history-item { border-bottom:1px solid #334155; padding:4px 0; font-size:14px; }
     .kept { color:#22c55e; font-weight:bold; }
@@ -19,9 +19,10 @@
     .roll-low { color:#ef4444; }
     .roll-mid { color:#eab308; }
     .roll-high { color:#22c55e; }
+    .mode-label { font-weight:bold; color:#38bdf8; margin-left:6px; }
     @media (max-width:600px){
       .btn { font-size:14px; padding:8px 10px; }
-      .count-control input { width:60px; }
+      .count-display { min-width:120px; }
     }
   </style>
 </head>
@@ -31,18 +32,17 @@
     <label>Count (0=Adv, -1=Dis):</label>
     <div class="count-control">
       <button id="decrCount" class="btn">–</button>
-      <input id="count" type="number" min="-1" max="20" value="1" />
+      <div id="countDisplay" class="count-display" aria-live="polite">1</div>
+      <input id="count" type="hidden" value="1" />
       <button id="incrCount" class="btn">+</button>
     </div>
   </div>  <div class="row">
     <label>Modifier:</label>
-    <input id="modifier" type="number" value="0" style="width:70px;" />
-    <label>Success ≥</label>
-    <input id="successTarget" type="number" min="0" max="100" value="0" style="width:70px;" />
+    <input id="modifier" type="number" value="0" style="width:100px;" />
   </div>  <div class="row">
     <button id="rollBtn" class="btn">Roll</button>
   </div>  <div id="settings"></div>  <section class="card" id="currentCard" hidden>
-    <h3>Result</h3>
+    <h3>Result <span id="modeBadge" class="mode-label"></span></h3>
     <div id="attempts"></div>
     <div id="final"></div>
   </section>  <section class="card">
@@ -53,17 +53,17 @@
 const diceFaces=[2,3,4,6,8,10,12,20,100];
 const diceRow=document.getElementById('diceRow');
 diceFaces.forEach(f=>{
-  let b=document.createElement('button');
+  const b=document.createElement('button');
   b.textContent='d'+f;
   b.className='btn';
-  b.onclick=()=>{state.faces=f;updateSettings();};
+  b.onclick=()=>{state.faces=f; updateSettings();};
   diceRow.appendChild(b);
 });
 
-const state={faces:6,count:1,modifier:0,successTarget:0,mode:'normal',history:[]};
+const state={faces:6,count:1,modifier:0,mode:'normal',history:[]};
 
 function randInt(max){return Math.floor(Math.random()*max)+1;}
-function basicRoll(faces,count){let rolls=[];for(let i=0;i<count;i++)rolls.push(randInt(faces));return rolls;}
+function basicRoll(faces,count){const rolls=[];for(let i=0;i<count;i++)rolls.push(randInt(faces));return rolls;}
 
 function colorizeRoll(value,faces){
   if(value===1) return `<span class="roll-low">${value}</span>`;
@@ -74,36 +74,38 @@ function colorizeRoll(value,faces){
 }
 
 function performRoll(){
-  state.count=parseInt(count.value);
+  // read latest
+  state.count=parseInt(document.getElementById('count').value);
   state.modifier=parseInt(modifier.value);
-  state.successTarget=parseInt(successTarget.value);
 
-  function oneRoll(){
-    let rolls=basicRoll(state.faces,Math.abs(state.count));
-    let sum=rolls.reduce((a,b)=>a+b,0);
-    let info="";
-    if(state.successTarget>0){ sum=rolls.filter(r=>r>=state.successTarget).length; info=`Successes (≥${state.successTarget})`; }
-    return {rolls,sum,info};
+  function oneRoll(numDice){
+    const n = Math.max(1, numDice|0);
+    const rolls=basicRoll(state.faces, n);
+    const sum=rolls.reduce((a,b)=>a+b,0);
+    return {rolls,sum};
   }
 
   let attempts=[];
   if(state.count>0){
-    const a=oneRoll();
+    const a=oneRoll(state.count);
     attempts=[{...a,kept:true}];
+    state.mode='normal';
   } else if(state.count===0){
-    const a=oneRoll(); const b=oneRoll();
+    const a=oneRoll(1), b=oneRoll(1);
     const keep=(a.sum>=b.sum);
     attempts=[{...a,kept:keep},{...b,kept:!keep}];
+    state.mode='adv';
   } else if(state.count===-1){
-    const a=oneRoll(); const b=oneRoll();
+    const a=oneRoll(1), b=oneRoll(1);
     const keep=(a.sum<=b.sum);
     attempts=[{...a,kept:keep},{...b,kept:!keep}];
+    state.mode='dis';
   }
 
-  let kept=attempts.find(x=>x.kept);
-  let final=kept.sum+state.modifier;
+  const kept=attempts.find(x=>x.kept);
+  const final=kept.sum+state.modifier;
   renderCurrent(attempts,final);
-  state.history.unshift({t:Date.now(),attempts,final});
+  state.history.unshift({t:Date.now(),attempts,final,mode:state.mode,faces:state.faces});
   renderHistory();
 }
 
@@ -111,15 +113,16 @@ function renderCurrent(attempts,final){
   currentCard.hidden=false;
   const attemptsEl=document.getElementById('attempts');
   const finalDiv=document.getElementById('final');
+  const badge=document.getElementById('modeBadge');
   attemptsEl.innerHTML='';
   attempts.forEach(a=>{
-    let div=document.createElement('div');
+    const div=document.createElement('div');
     div.className='history-item';
     const colored=a.rolls.map(r=>colorizeRoll(r,state.faces)).join(', ');
-    let info=a.info?` <em>${a.info}</em>`:"";
-    div.innerHTML=`<span>[${colored}]</span> ⇒ <strong>${a.sum}</strong>${a.kept?' <span class="kept">(kept)</span>':''}${info}`;
+    div.innerHTML=`<span>[${colored}]</span> ⇒ <strong>${a.sum}</strong>${a.kept?' <span class="kept">(kept)</span>':''}`;
     attemptsEl.appendChild(div);
   });
+  badge.textContent = state.mode==='adv' ? 'Advantage' : state.mode==='dis' ? 'Disadvantage' : '';
   finalDiv.textContent='Total: '+final;
   updateSettings();
 }
@@ -128,36 +131,57 @@ function renderHistory(){
   const historyEl=document.getElementById('history');
   historyEl.innerHTML='';
   state.history.forEach(h=>{
-    let div=document.createElement('div');
+    const div=document.createElement('div');
     div.className='history-item';
     const time=new Date(h.t).toLocaleTimeString();
-    const kept=h.attempts.find(a=>a.kept);
-    const colored=kept.rolls.map(r=>colorizeRoll(r,state.faces)).join(', ');
-    let info=kept.info?` <em>${kept.info}</em>`:"";
-    div.innerHTML=`${time} ⇒ [${colored}] = <strong>${h.final}</strong>${info}`;
+    const modeLabel = h.mode==='adv'?'<span class="mode-label">Advantage</span>':h.mode==='dis'?'<span class="mode-label">Disadvantage</span>':"";
+    const allRolls=h.attempts.map(a=>`[${a.rolls.map(r=>colorizeRoll(r,h.faces)).join(', ')}] ⇒ ${a.sum}${a.kept?' (kept)':''}`).join('<br/>');
+    div.innerHTML=`${time} ${modeLabel}<br/>${allRolls}<br/><strong>Total: ${h.final}</strong>`;
     historyEl.appendChild(div);
   });
 }
 
-function updateSettings(){
-  state.count=parseInt(count.value);
-  state.modifier=parseInt(modifier.value);
-  state.successTarget=parseInt(successTarget.value);
-  let modeTxt="Normal";
-  if(state.count===0) modeTxt="Advantage";
-  else if(state.count===-1) modeTxt="Disadvantage";
-  document.getElementById('settings').textContent=`Current: d${state.faces}, Count=${state.count}, Mode=${modeTxt}, Modifier=${state.modifier}, Success≥${state.successTarget}`;
+function updateCountDisplay(){
+  const cnt = parseInt(document.getElementById('count').value);
+  const disp = document.getElementById('countDisplay');
+  if (cnt===0) disp.textContent='Advantage';
+  else if (cnt===-1) disp.textContent='Disadvantage';
+  else disp.textContent=String(cnt);
 }
 
+function updateSettings(){
+  const cnt=parseInt(document.getElementById('count').value)||1;
+  state.count=cnt;
+  updateCountDisplay();
+  const modTxt = state.modifier===0 ? '' : (state.modifier>0?`+${state.modifier}`:`${state.modifier}`);
+  const dicePart = (cnt>0? cnt : 1) + 'd' + state.faces;
+  document.getElementById('settings').textContent = `Current: ${dicePart}${modTxt}`;
+}
+
+// UI wiring
 rollBtn.onclick=performRoll;
 clearHistory.onclick=()=>{if(confirm('Clear history?')){state.history=[];renderHistory();}};
-decrCount.onclick=()=>{let v=parseInt(count.value)||1; if(v>-1){count.value=v-1;} updateSettings();};
-incrCount.onclick=()=>{let v=parseInt(count.value)||1; if(v<20){count.value=v+1;} updateSettings();};
 
-[count,modifier,successTarget].forEach(el=>{
-  el.addEventListener('input',updateSettings);
-});
+decrCount.onclick=()=>{
+  const hidden=document.getElementById('count');
+  let v=parseInt(hidden.value)||1;
+  if (v> -1) { v = v-1; } // 1->0, 0->-1, stop at -1
+  else { v = -1; }
+  hidden.value = v; updateSettings();
+};
 
+incrCount.onclick=()=>{
+  const hidden=document.getElementById('count');
+  let v=parseInt(hidden.value)||1;
+  if (v<0) { v = 0; } // -1 -> 0
+  else if (v<20) { v = v+1; } // 0 -> 1, 1..19 -> +1
+  hidden.value = v; updateSettings();
+};
+
+// Live updates
+modifier.addEventListener('input', ()=>{ state.modifier=parseInt(modifier.value)||0; updateSettings(); });
+
+// Build dice buttons
 updateSettings();
 </script></body>
 </html>
