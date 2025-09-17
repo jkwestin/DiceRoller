@@ -1,5 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
+<!DOCTYPE html><html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -20,7 +19,6 @@
     .roll-low { color:#ef4444; }
     .roll-mid { color:#eab308; }
     .roll-high { color:#22c55e; }
-    .mode-label { font-weight:bold; color:#38bdf8; margin-right:6px; }
     @media (max-width:600px){
       .btn { font-size:14px; padding:8px 10px; }
       .count-control input { width:60px; }
@@ -29,47 +27,29 @@
 </head>
 <body>
 <div class="container">
-  <header>🎲 RPG Dice Roller</header>
-
-  <!-- Dice selection row -->
-  <div class="row" id="diceRow"></div>
-
-  <!-- Count row -->
-  <div class="row">
+  <header>🎲 RPG Dice Roller</header>  <!-- Dice selection row -->  <div class="row" id="diceRow"></div>  <!-- Count row -->  <div class="row">
     <label>Count (0=Adv, -1=Dis):</label>
     <div class="count-control">
       <button id="decrCount" class="btn">–</button>
       <input id="count" type="number" min="-1" max="20" value="1" />
       <button id="incrCount" class="btn">+</button>
     </div>
-  </div>
-
-  <div class="row">
+  </div>  <div class="row">
     <label>Modifier:</label>
     <input id="modifier" type="number" value="0" style="width:70px;" />
     <label>Success ≥</label>
     <input id="successTarget" type="number" min="0" max="100" value="0" style="width:70px;" />
-  </div>
-
-  <div class="row">
+  </div>  <div class="row">
     <button id="rollBtn" class="btn">Roll</button>
-  </div>
-
-  <div id="settings"></div>
-
-  <section class="card" id="currentCard" hidden>
+  </div>  <div id="settings"></div>  <section class="card" id="currentCard" hidden>
     <h3>Result</h3>
     <div id="attempts"></div>
     <div id="final"></div>
-  </section>
-
-  <section class="card">
+  </section>  <section class="card">
     <h3>History <button id="clearHistory" class="btn small">Clear</button></h3>
     <div id="history"></div>
   </section>
-</div>
-
-<script>
+</div><script>
 const diceFaces=[2,3,4,6,8,10,12,20,100];
 const diceRow=document.getElementById('diceRow');
 diceFaces.forEach(f=>{
@@ -110,23 +90,20 @@ function performRoll(){
   if(state.count>0){
     const a=oneRoll();
     attempts=[{...a,kept:true}];
-    state.mode='normal';
   } else if(state.count===0){
     const a=oneRoll(); const b=oneRoll();
     const keep=(a.sum>=b.sum);
     attempts=[{...a,kept:keep},{...b,kept:!keep}];
-    state.mode='adv';
   } else if(state.count===-1){
     const a=oneRoll(); const b=oneRoll();
     const keep=(a.sum<=b.sum);
     attempts=[{...a,kept:keep},{...b,kept:!keep}];
-    state.mode='dis';
   }
 
   let kept=attempts.find(x=>x.kept);
   let final=kept.sum+state.modifier;
   renderCurrent(attempts,final);
-  state.history.unshift({t:Date.now(),attempts,final,mode:state.mode});
+  state.history.unshift({t:Date.now(),attempts,final});
   renderHistory();
 }
 
@@ -143,8 +120,7 @@ function renderCurrent(attempts,final){
     div.innerHTML=`<span>[${colored}]</span> ⇒ <strong>${a.sum}</strong>${a.kept?' <span class="kept">(kept)</span>':''}${info}`;
     attemptsEl.appendChild(div);
   });
-  const modeLabel = state.mode==='adv'?' (Advantage)':state.mode==='dis'?' (Disadvantage)':'';
-  finalDiv.textContent='Total: '+final+modeLabel;
+  finalDiv.textContent='Total: '+final;
   updateSettings();
 }
 
@@ -155,9 +131,10 @@ function renderHistory(){
     let div=document.createElement('div');
     div.className='history-item';
     const time=new Date(h.t).toLocaleTimeString();
-    const modeLabel = h.mode==='adv'?'<span class="mode-label">Advantage</span>':h.mode==='dis'?'<span class="mode-label">Disadvantage</span>':"";
-    const allRolls=h.attempts.map(a=>`[${a.rolls.map(r=>colorizeRoll(r,state.faces)).join(', ')}] ⇒ ${a.sum}${a.kept?' (kept)':''}`).join('<br/>');
-    div.innerHTML=`${time} ${modeLabel}<br/>${allRolls}<br/><strong>Total: ${h.final}</strong>`;
+    const kept=h.attempts.find(a=>a.kept);
+    const colored=kept.rolls.map(r=>colorizeRoll(r,state.faces)).join(', ');
+    let info=kept.info?` <em>${kept.info}</em>`:"";
+    div.innerHTML=`${time} ⇒ [${colored}] = <strong>${h.final}</strong>${info}`;
     historyEl.appendChild(div);
   });
 }
@@ -182,6 +159,5 @@ incrCount.onclick=()=>{let v=parseInt(count.value)||1; if(v<20){count.value=v+1;
 });
 
 updateSettings();
-</script>
-</body>
+</script></body>
 </html>
