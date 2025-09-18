@@ -24,7 +24,6 @@
     .mode-label { font-weight:bold; color:#38bdf8; margin-left:6px; }
     .chart { width:100%; height:240px; background:#0b1220; border:1px solid #334155; border-radius:6px; }
     .stats-note { font-size:12px; color:#94a3b8; margin-top:6px; }
-    .select { background:#1e293b; color:#e5e7eb; border:1px solid #334155; border-radius:6px; padding:8px 10px; font-size:16px; }
     @media (max-width:600px){
       .btn { font-size:14px; padding:8px 10px; }
       .count-display, .mod-display { min-width:120px; }
@@ -59,12 +58,6 @@
 
   <div class="row">
     <button id="rollBtn" class="btn">Roll</button>
-    <select id="trialsSelect" class="select" title="Number of samples for Monte Carlo">
-      <option value="1000">1k</option>
-      <option value="10000" selected>10k</option>
-      <option value="50000">50k</option>
-      <option value="100000">100k</option>
-    </select>
     <button id="probBtn" class="btn" title="Run Monte Carlo and show histogram">Probability distribution</button>
   </div>
 
@@ -90,6 +83,8 @@ const diceFaces=[2,3,4,6,8,10,12,20,30,60,100];
 const diceRow=document.getElementById('diceRow');
 
 const state={faces:6,count:1,modifier:0,mode:'normal',history:[]};
+const PROB_STEPS=[1000,10000,50000,100000,200000];
+let probStepIdx=-1; // -1 means not started
 
 function buildDiceButtons(){
   diceRow.innerHTML='';
@@ -229,6 +224,16 @@ function updateCountDisplay(){
   else disp.textContent=String(cnt);
 }
 
+function resetProbabilityUI(){
+  probStepIdx = -1;
+  const btn = document.getElementById('probBtn');
+  if (btn) btn.textContent = 'Probability distribution';
+  const canvas=document.getElementById('histCanvas');
+  if (canvas) canvas.hidden = true;
+  const stats=document.getElementById('probStats');
+  if (stats) stats.textContent = '';
+}
+
 function updateSettings(){
   const cnt=parseInt(document.getElementById('count').value);
   state.count=cnt;
@@ -241,6 +246,8 @@ function updateSettings(){
   if(cnt===0) dicePart = 'Adv d'+state.faces;
   if(cnt===-1) dicePart = 'Dis d'+state.faces;
   document.getElementById('settings').textContent = `Current: ${dicePart}${modTxt}`;
+  // reset refine cycle on any setup change
+  resetProbabilityUI();
 }
 
 function saveHistory(){
@@ -321,16 +328,24 @@ function drawHistogram(keys, values){
 }
 
 function runProbability(){
-  // Show result card even if we haven't rolled yet
+  // step through 1k -> 10k -> 50k -> 100k -> 200k -> 200k...
+  if (probStepIdx < PROB_STEPS.length - 1) probStepIdx += 1;
+  const trials = PROB_STEPS[probStepIdx];
+
+  // Show result card, clear attempts & total
   const card = document.getElementById('currentCard');
   card.hidden = false;
-  // trials from dropdown
-  const sel = document.getElementById('trialsSelect');
-  const trials = sel ? parseInt(sel.value)||10000 : 10000;
+  document.getElementById('attempts').innerHTML = '';
+  document.getElementById('final').textContent = '';
+
+  // Update button label to Refine after first press
+  const btn = document.getElementById('probBtn');
+  btn.textContent = 'Refine';
+
+  // Simulate and draw
   const {keys, values} = simulateDistribution(trials);
   const canvas=document.getElementById('histCanvas');
   canvas.hidden=false;
-  // Draw after layout
   requestAnimationFrame(()=>{
     drawHistogram(keys, values);
     const totalCount = values.reduce((a,b)=>a+b,0);
@@ -346,7 +361,6 @@ function runProbability(){
 rollBtn.onclick=performRoll;
 probBtn.onclick=runProbability;
 clearHistory.onclick=()=>{ if(confirm('Clear history?')){ state.history=[]; clearSavedHistory(); renderHistory(); } };
-
 
 decrCount.onclick=()=>{
   const hidden=document.getElementById('count');
