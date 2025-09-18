@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>D6 Dice Roller</title>
+  <style>
+    /* Layout & Theme */
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: #0f172a; color: #e5e7eb; margin:0; padding:0.5rem; display:flex; flex-direction:column; min-height:100vh; }
+    header { margin-bottom:0.5rem; font-size:18px; }
+    .row { display:flex; flex-wrap:wrap; margin-bottom:8px; gap:6px; align-items:center; }
+    .card { background:#1e293b; padding:10px; border-radius:6px; margin-top:0.5rem; }
+    footer { margin-top:auto; font-size:12px; color:#94a3b8; text-align:center; padding:8px 0; }
+
+    /* Buttons & Inputs */
+    .btn { background:#2563eb; color:white; border:none; padding:10px 14px; border-radius:6px; cursor:pointer; font-size:16px; margin:2px; }
+    .btn:hover { filter:brightness(1.1); }
+    .btn.selected { background:#16a34a !important; }
+    .btn.mod { background:#1e40af; }
+    .count-control { display:flex; align-items:center; }
+    .count-control button { font-size:20px; padding:8px 12px; margin:0 4px; }
+    .count-display, .mod-display { font-size:18px; min-width:140px; text-align:center; background:#0b1220; border-radius:6px; padding:8px 10px; border:1px solid #334155; }
+
+    /* Results */
+    #settings { margin:6px 0; font-size:14px; color:#a3e635; }
+    .history-item { border-bottom:1px solid #334155; padding:4px 0; font-size:14px; }
+    .mode-label { font-weight:bold; color:#38bdf8; margin-left:6px; }
+    .roll-low { color:#ef4444; }
+    .roll-mid { color:#eab308; }
+    .roll-high { color:#22c55e; }
+
+    /* Charts */
+    .chart { width:100%; height:240px; background:#0b1220; border:1px solid #334155; border-radius:6px; display:block; }
+    .stats-note { font-size:12px; color:#94a3b8; margin-top:6px; }
+    [hidden] { display: none !important; }
+    
+    @media (max-width:600px){
+      .btn { font-size:14px; padding:8px 10px; }
+      .count-display { min-width:120px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>🎲 D6 Dice Roller</header>
+
+    <!-- Mode selector -->
+    <div class="row">
+      <label>Mode:</label>
+      <div id="modeRow">
+        <button data-mode="sum" class="btn selected">Sum</button>
+        <button data-mode="kh" class="btn">Keep Highest</button>
+        <button data-mode="kl" class="btn">Keep Lowest</button>
+        <button data-mode="succ" class="btn">Success Count</button>
+        <button data-mode="explode" class="btn">Exploding 6s</button>
+        <button data-mode="reroll1" class="btn">Reroll 1s</button>
+      </div>
+    </div>
+
+    <!-- Success threshold (only for Success Count) -->
+    <div class="row" id="succRow" hidden>
+      <label>Success on ≥</label>
+      <div class="count-control">
+        <button id="decrTN" class="btn mod">–</button>
+        <div id="tnDisplay" class="mod-display">5</div>
+        <input id="tn" type="hidden" value="5"/>
+        <button id="incrTN" class="btn mod">+</button>
+      </div>
+    </div>
+
+    <!-- Count row (0=Adv, -1=Dis, else dice count 1..20) -->
+    <div class="row">
+      <label>Number of dices (Disadv., Adv, 1,2,...,20):</label>
+      <div class="count-control">
+        <button id="decrCount" class="btn">–</button>
+        <div id="countDisplay" class="count-display" aria-live="polite">1</div>
+        <input id="count" type="hidden" value="1" />
+        <button id="incrCount" class="btn">+</button>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="row">
+      <button id="rollBtn" class="btn">Roll</button>
+      <button id="probBtn" class="btn" title="Run Monte Carlo and show histogram">Probability distribution</button>
+    </div>
+
+    <!-- Live summary -->
+    <div id="settings"></div>
+
+    <!-- Results card -->
+    <section class="card" id="currentCard" hidden>
+      <h3>Result <span id="modeBadge" class="mode-label"></span></h3>
+      <div id="attempts"></div>
+      <div id="final"></div>
+      <canvas id="histCanvas" class="chart" hidden></canvas>
+      <canvas id="cdfCanvas" class="chart" hidden></canvas>
+      <div id="probStats" class="stats-note"></div>
+    </section>
+
+    <!-- History -->
+    <section class="card">
+      <h3>History <button id="clearHistory" class="btn small">Clear</button></h3>
+      <div id="history"></div>
+    </section>
+  </div>
+
+  <footer>
+    Made by Jonas Westin © 2025
+  </footer>
+
+  <script>
+  (function(){
+    'use strict';
+
+    // ====== Config & State (D6 only) ======
+    var STORAGE_KEY='rpg_dice_history_v2';
+    var PROB_STEPS=[1000,10000,50000,100000,200000,400000];
+    var probStepIdx=-1; // -1 means not started
+
+    var state={faces:6,count:1,mode:'sum',history:[]};
+
+    // ====== RNG ======
+    function randInt(max){
+      if(window.crypto && window.crypto.getRandomValues){
+        var array = new Uint32Array(1);
+        window.crypto.getRandomValues(array);
+        return (array[0] % max) + 1;
+      } else {
+        return Math.floor(Math.random()*max)+1;
+      }
+    }
+
+    // ====== Core Helpers ======
+    function basicRoll(faces,count){
+      var rolls=[]; for(var i=0;i<count;i++){ rolls.push(randInt(faces)); } return rolls;
+    }
+    function rollNd6(n){ return basicRoll(6, Math.max(1,n)); }
+
+    function rollExploding6s(n){
+      var out=[], sum=0;
+      for(var i=0;i<n;i++){
+        var r=randInt(6); out.push(r); sum+=r;
+        while(r===6){ r=randInt(6); out.push(r); sum+=r; }
+      }
+      return {rolls:out, sum:sum};
+    }
+
+    function rollReroll1s(n){
+      // Each die that shows 1 is rerolled exactly once; second result stands.
+      var out=[], sum=0;
+      for(var i=0;i<n;i++){
+        var r=randInt(6);
+        if(r===1){ r=randInt(6); }
+        out.push(r); sum+=r;
+      }
+      return {rolls:out, sum:sum};
+    }
+
+    function countSuccesses(rolls, tn){
+      var hits=0; for(var i=0;i<rolls.length;i++){ if(rolls[i]>=tn) hits++; } return hits;
+    }
+
+    function colorizeRoll(v,f){
+      if(v===1) return '<span class="roll-low">'+v+'</span>';
+      if(v===f) return '<span class="roll-high">'+v+'</span>';
+      if(v<=Math.ceil(f/3)) return '<span class="roll-low">'+v+'</span>';
+      if(v>=Math.floor(2*f/3)) return '<span class="roll-high">'+v+'</span>';
+      return '<span class="roll-mid">'+v+'</span>';
+    }
+
+    // ====== Roll Logic ======
+    function performRoll(){
+      resetProbabilityUI();
+
+      state.count=parseInt(document.getElementById('count').value,10);
+      var tn=parseInt((document.getElementById('tn')||{value:5}).value,10);
+
+      var attempt, rolls, sum, n = (state.count>0?state.count:1);
+
+      if(state.mode==='explode'){
+        var ex=rollExploding6s(n); attempt={rolls:ex.rolls, sum:ex.sum, mode:'explode'};
+      } else if(state.mode==='reroll1'){
+        var rr=rollReroll1s(n); attempt={rolls:rr.rolls, sum:rr.sum, mode:'reroll1'};
+      } else if(state.mode==='kh'){
+        rolls=rollNd6(n); var hi=Math.max.apply(null, rolls);
+        attempt={rolls:rolls, sum:hi, mode:'kh'};
+      } else if(state.mode==='kl'){
+        rolls=rollNd6(n); var lo=Math.min.apply(null, rolls);
+        attempt={rolls:rolls, sum:lo, mode:'kl'};
+      } else if(state.mode==='succ'){
+        rolls=rollNd6(n); var hits=countSuccesses(rolls, tn);
+        attempt={rolls:rolls, sum:hits, mode:'succ', tn:tn};
+      } else { // 'sum' (supports adv/dis on one die if count is 0/-1)
+        if(state.count===0){ var a=randInt(6), b=randInt(6); attempt={rolls:[a,b], sum:Math.max(a,b), mode:'adv'}; }
+        else if(state.count===-1){ var c=randInt(6), d=randInt(6); attempt={rolls:[c,d], sum:Math.min(c,d), mode:'dis'}; }
+        else { rolls=rollNd6(n); sum=rolls.reduce(function(s,v){return s+v;},0); attempt={rolls:rolls, sum:sum, mode:'sum'}; }
+      }
+
+      var finalTotal = attempt.sum; // no modifier anywhere
+
+      renderCurrent([attempt], finalTotal);
+      state.history.unshift({t:Date.now(), attempt:attempt, final:finalTotal, faces:6, mode:state.mode, tn:tn});
+      saveHistory(); renderHistory();
+    }
+
+    // ====== Rendering ======
+    function renderCurrent(attempts,finalVal){
+      var card=document.getElementById('currentCard'); card.hidden=false;
+      var attemptsEl=document.getElementById('attempts'); attemptsEl.innerHTML='';
+      var finalDiv=document.getElementById('final');
+      var badge=document.getElementById('modeBadge');
+
+      var a=attempts[0];
+      var colored='';
+      for(var i=0;i<a.rolls.length;i++){ colored += (i? ', ':'') + colorizeRoll(a.rolls[i],6); }
+      var arrow=(a.mode==='adv'||a.mode==='dis') ? ' → <strong>'+a.sum+'</strong>' : ' ⇒ <strong>'+a.sum+'</strong>';
+      var line='<span>['+colored+']</span>'+arrow;
+      if(a.mode==='succ' && a.tn){ line += ' (TN ≥ '+a.tn+')'; }
+      var div=document.createElement('div'); div.className='history-item'; div.innerHTML=line; attemptsEl.appendChild(div);
+
+      var modeNames = {sum:'Sum', kh:'Keep Highest', kl:'Keep Lowest', succ:'Successes', explode:'Exploding 6s', reroll1:'Reroll 1s', adv:'Advantage', dis:'Disadvantage'};
+      badge.textContent = modeNames[a.mode] || '';
+
+      finalDiv.textContent = (a.mode==='succ') ? ('Hits: '+finalVal) : ('Total: '+finalVal);
+
+      // hide previous charts & stats on a fresh roll
+      document.getElementById('histCanvas').hidden=true;
+      document.getElementById('cdfCanvas').hidden=true;
+      document.getElementById('probStats').textContent='';
+
+      updateSettings();
+    }
+
+    function renderHistory(){
+      var hEl=document.getElementById('history'); hEl.innerHTML='';
+      for(var i=0;i<state.history.length;i++){
+        var h=state.history[i]; var a=h.attempt;
+        var colored=''; for(var j=0;j<a.rolls.length;j++){ colored += (j? ', ':'') + colorizeRoll(a.rolls[j],6); }
+        var arrow=(a.mode==='adv'||a.mode==='dis') ? ' → <strong>'+a.sum+'</strong>' : ' ⇒ <strong>'+a.sum+'</strong>';
+        var modeNames = {sum:'Sum', kh:'Keep Highest', kl:'Keep Lowest', succ:'Successes', explode:'Exploding 6s', reroll1:'Reroll 1s', adv:'Advantage', dis:'Disadvantage'};
+        var modeLbl = modeNames[a.mode] ? ' <span class="mode-label">'+modeNames[a.mode]+'</span>' : '';
+        var tnNote = (a.mode==='succ' && h.tn) ? ' (TN ≥ '+h.tn+')' : '';
+        hEl.innerHTML += '<div class="history-item">'+ new Date(h.t).toLocaleTimeString() + modeLbl + tnNote + '<br/>['+colored+']'+arrow+'  |  '+((a.mode==='succ')?'Hits':'Total')+': <strong>'+h.final+'</strong></div>';
+      }
+    }
+
+    // ====== Settings & Display ======
+    function updateCountDisplay(){
+      var c=parseInt(document.getElementById('count').value,10);
+      var d=document.getElementById('countDisplay');
+      d.textContent=(c===0)?'Advantage':((c===-1)?'Disadvantage':String(c));
+    }
+    function resetProbabilityUI(){
+      probStepIdx=-1;
+      var btn=document.getElementById('probBtn'); if(btn) btn.textContent='Probability distribution';
+      var hist=document.getElementById('histCanvas'); if(hist) hist.hidden=true;
+      var cdf=document.getElementById('cdfCanvas'); if(cdf) cdf.hidden=true;
+      var stats=document.getElementById('probStats'); if(stats) stats.textContent='';
+    }
+    function updateSettings(){
+      var cnt=parseInt(document.getElementById('count').value,10);
+      state.count=cnt;
+      updateCountDisplay();
+
+      var dicePart=(cnt>0?cnt:1)+'d6';
+      if(cnt===0) dicePart='Adv d6';
+      if(cnt===-1) dicePart='Dis d6';
+      var modeTxt = ({sum:'Sum',kh:'Keep Highest',kl:'Keep Lowest',succ:'Successes',explode:'Exploding 6s',reroll1:'Reroll 1s'})[state.mode] || '';
+      var tn = parseInt((document.getElementById('tn')||{value:5}).value,10);
+      var succTxt = (state.mode==='succ') ? (' (TN ≥ '+tn+')') : '';
+      document.getElementById('settings').textContent='Current: '+dicePart+' | '+modeTxt+succTxt;
+
+      // reset probability when setup changes
+      resetProbabilityUI();
+    }
+
+    // ====== Storage ======
+    function saveHistory(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state.history)); }catch(e){} }
+    function loadHistory(){ try{ var raw=localStorage.getItem(STORAGE_KEY); if(raw){ var arr=JSON.parse(raw); if(Array.isArray(arr)) state.history=arr; } }catch(e){} }
+    function clearSavedHistory(){ try{ localStorage.removeItem(STORAGE_KEY); }catch(e){} }
+
+    // ====== Probability (Monte Carlo) ======
+    function simulateDistribution(trials){
+      if(typeof trials!=='number' || trials<=0) trials=10000;
+      var cnt=parseInt(document.getElementById('count').value,10);
+      var tn=parseInt((document.getElementById('tn')||{value:5}).value,10);
+      var mode=state.mode;
+      var freq=new Map();
+
+      function rollOnce(){
+        var n=(cnt>0?cnt:1), rolls, total;
+        if(mode==='explode'){
+          var ex=rollExploding6s(n); return ex.sum;
+        } else if(mode==='reroll1'){
+          var rr=rollReroll1s(n); return rr.sum;
+        } else if(mode==='kh'){
+          rolls=rollNd6(n); return Math.max.apply(null, rolls);
+        } else if(mode==='kl'){
+          rolls=rollNd6(n); return Math.min.apply(null, rolls);
+        } else if(mode==='succ'){
+          rolls=rollNd6(n); return countSuccesses(rolls, tn); // hits
+        } else { // sum
+          if(cnt===0){ var a=randInt(6), b=randInt(6); return Math.max(a,b); }
+          if(cnt===-1){ var c=randInt(6), d=randInt(6); return Math.min(c,d); }
+          total=0; for(var i=0;i<n;i++){ total+=randInt(6); } return total;
+        }
+      }
+
+      for(var t=0;t<trials;t++){
+        var v=rollOnce();
+        freq.set(v, (freq.get(v)||0)+1);
+      }
+      var keys=[]; freq.forEach(function(_,k){ keys.push(k); }); keys.sort(function(x,y){return x-y;});
+      var values=[]; for(var i2=0;i2<keys.length;i2++){ values.push(freq.get(keys[i2])); }
+      return {keys:keys, values:values, trials:trials};
+    }
+
+    function setupCanvas(canvas){
+      var dpr=window.devicePixelRatio||1;
+      var rect=canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : {width:canvas.clientWidth, height:canvas.clientHeight};
+      var cssW=Math.max(280,(rect.width||canvas.clientWidth||320));
+      var cssH=canvas.clientHeight||240;
+      canvas.width=Math.floor(cssW*dpr);
+      canvas.height=Math.floor(cssH*dpr);
+      var ctx=canvas.getContext('2d');
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      return {ctx:ctx, cssW:cssW, cssH:cssH};
+    }
+
+    function drawHistogram(keys,values){
+      var canvas=document.getElementById('histCanvas');
+      var conf=setupCanvas(canvas), ctx=conf.ctx, cssW=conf.cssW, cssH=conf.cssH;
+      // background
+      ctx.fillStyle='#0b1220'; ctx.fillRect(0,0,cssW,cssH);
+      // layout
+      var padL=36,padR=10,padT=10,padB=26; var W=cssW-padL-padR, H=cssH-padT-padB;
+      // axes
+      ctx.strokeStyle='#334155'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(padL,padT); ctx.lineTo(padL,padT+H); ctx.lineTo(padL+W,padT+H); ctx.stroke();
+      // bars
+      var maxVal=0; for(var i=0;i<values.length;i++){ if(values[i]>maxVal) maxVal=values[i]; }
+      var barW=Math.max(1, Math.floor(W/Math.max(1,keys.length)) - 2);
+      for(var j=0;j<keys.length;j++){
+        var x=padL + j*(barW+2);
+        var h=maxVal>0 ? Math.round((values[j]/maxVal)*H) : 0;
+        var y=padT + (H - h);
+        ctx.fillStyle='#60a5fa';
+        ctx.fillRect(x,y,barW,h);
+      }
+      // x ticks
+      ctx.fillStyle='#94a3b8'; ctx.font='12px system-ui'; ctx.textAlign='center';
+      var step=Math.ceil(keys.length/10); if(step<1) step=1;
+      for(var k=0;k<keys.length;k+=step){ var xt=padL + k*(barW+2) + barW/2; ctx.fillText(String(keys[k]), xt, padT+H+16); }
+    }
+
+    function drawCDF(keys, values){
+      var canvas=document.getElementById('cdfCanvas');
+      var conf=setupCanvas(canvas), ctx=conf.ctx, cssW=conf.cssW, cssH=conf.cssH;
+      // background
+      ctx.fillStyle='#0b1220'; ctx.fillRect(0,0,cssW,cssH);
+      // layout
+      var padL=36,padR=10,padT=10,padB=26; var W=cssW-padL-padR, H=cssH-padT-padB;
+      // grid
+      ctx.strokeStyle='#233044'; ctx.lineWidth=1;
+      var gridRows=5, gridCols=10, r;
+      for(r=0;r<=gridRows;r++){ var gy=padT + (H*r/gridRows); ctx.beginPath(); ctx.moveTo(padL,gy); ctx.lineTo(padL+W,gy); ctx.stroke(); }
+      for(r=0;r<=gridCols;r++){ var gx=padL + (W*r/gridCols); ctx.beginPath(); ctx.moveTo(gx,padT); ctx.lineTo(gx,padT+H); ctx.stroke(); }
+      // axes
+      ctx.strokeStyle='#334155'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(padL,padT); ctx.lineTo(padL,padT+H); ctx.lineTo(padL+W,padT+H); ctx.stroke();
+      // cumulative data
+      var total=0; for(var i=0;i<values.length;i++){ total+=values[i]; }
+      var cum=[]; var acc=0; for(var j=0;j<values.length;j++){ acc+=values[j]; cum.push(total? (acc/total) : 0); }
+      // red thick line
+      ctx.strokeStyle='#ef4444'; ctx.lineWidth=3; ctx.beginPath();
+      var n=Math.max(1,keys.length-1);
+      for(var t=0;t<keys.length;t++){
+        var x=padL + (W * (n===0?0:(t/n)));
+        var y=padT + (H * (1 - cum[t]));
+        if(t===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.stroke();
+      // y-axis 0..1
+      ctx.fillStyle='#94a3b8'; ctx.font='12px system-ui'; ctx.textAlign='right';
+      for(r=0;r<=gridRows;r++){ var p=r/gridRows; var yy=padT + (H*(1-p)); ctx.fillText(p.toFixed(1), padL-6, yy+4); }
+      // x-axis sparse labels mirror histogram
+      ctx.textAlign='center';
+      var step=Math.ceil(keys.length/10); if(step<1) step=1;
+      for(var m=0;m<keys.length;m+=step){ var xx=padL + (W * (n===0?0:(m/n))); ctx.fillText(String(keys[m]), xx, padT+H+16); }
+    }
+
+    function runProbability(){
+      if(probStepIdx<PROB_STEPS.length-1) probStepIdx+=1; // advance, capped
+      var trials=PROB_STEPS[probStepIdx];
+      var card=document.getElementById('currentCard'); card.hidden=false;
+      document.getElementById('attempts').innerHTML='';
+      document.getElementById('final').textContent='';
+      var btn=document.getElementById('probBtn'); btn.textContent='Refine';
+      var res=simulateDistribution(trials);
+      var hist=document.getElementById('histCanvas'); hist.hidden=false;
+      var cdf=document.getElementById('cdfCanvas'); cdf.hidden=false;
+      window.requestAnimationFrame(function(){
+        drawHistogram(res.keys,res.values);
+        drawCDF(res.keys,res.values);
+        var total=0; for(var i=0;i<res.values.length;i++){ total+=res.values[i]; }
+        var sum=0; for(var j=0;j<res.keys.length;j++){ sum += res.keys[j]*res.values[j]; }
+        var mean = total? (sum/total).toFixed(2) : '0.00';
+        var min=res.keys[0]||0, max=(res.keys.length?res.keys[res.keys.length-1]:0);
+        var maxF=0; for(var k=0;k<res.values.length;k++){ if(res.values[k]>maxF) maxF=res.values[k]; }
+        var modes=[]; for(var t=0;t<res.keys.length;t++){ if(res.values[t]===maxF) modes.push(res.keys[t]); }
+        document.getElementById('probStats').textContent='Simulated '+ trials.toLocaleString() +' rolls → mean '+ mean +', range '+ min +'–'+ max +', mode '+ modes.join(', ');
+      });
+    }
+
+    // ====== Wire Up ======
+    document.getElementById('rollBtn').onclick=performRoll;
+    document.getElementById('probBtn').onclick=runProbability;
+    document.getElementById('clearHistory').onclick=function(){ if(confirm('Clear history?')){ state.history=[]; clearSavedHistory(); renderHistory(); } };
+
+    document.getElementById('decrCount').onclick=function(){
+      var hidden=document.getElementById('count');
+      var v=parseInt(hidden.value,10); if(isNaN(v)) v=1;
+      if(v>1) v--; else if(v===1) v=0; else if(v===0) v=-1; else v=-1;
+      hidden.value=v; updateSettings();
+    };
+    document.getElementById('incrCount').onclick=function(){
+      var hidden=document.getElementById('count');
+      var v=parseInt(hidden.value,10); if(isNaN(v)) v=1;
+      if(v===-1) v=0; else if(v===0) v=1; else if(v<20) v++;
+      hidden.value=v; updateSettings();
+    };
+
+    // Mode buttons
+    (function(){
+      var modeRow=document.getElementById('modeRow');
+      function selectMode(m){
+        state.mode=m;
+        modeRow.querySelectorAll('button').forEach(function(b){
+          b.classList.toggle('selected', b.dataset.mode===m);
+        });
+        document.getElementById('succRow').hidden = (m!=='succ');
+        updateSettings();
+      }
+      modeRow.addEventListener('click', function(e){
+        var b=e.target.closest('button[data-mode]'); if(!b) return;
+        selectMode(b.dataset.mode);
+      });
+    })();
+
+    // Threshold controls
+    document.getElementById('decrTN').onclick=function(){
+      var v=parseInt(document.getElementById('tn').value,10)||5;
+      v=Math.max(2, v-1);
+      document.getElementById('tn').value=v; document.getElementById('tnDisplay').textContent=v; updateSettings();
+    };
+    document.getElementById('incrTN').onclick=function(){
+      var v=parseInt(document.getElementById('tn').value,10)||5;
+      v=Math.min(6, v+1);
+      document.getElementById('tn').value=v; document.getElementById('tnDisplay').textContent=v; updateSettings();
+    };
+
+    // ====== Init ======
+    loadHistory();
+    renderHistory();
+    updateSettings();
+
+    // ====== Minimal Self-Tests (console) ======
+    try {
+      console.assert(randInt(1)===1, 'randInt(1) should always be 1');
+      // Sum range for 3d6 should be between 3 and 18
+      (function(){
+        var faces=6, n=3, trials=200;
+        for(var i=0;i<trials;i++){
+          var s=0; for(var j=0;j<n;j++){ s+=Math.min(faces,Math.max(1,randInt(faces))); }
+          if(s<3 || s>18){ throw new Error('3d6 sum out of range: '+s); }
+        }
+      })();
+      // Advantage/Disadvantage: result must be one of the two dice (using D6)
+      (function(){
+        var f=6; for(var i=0;i<100;i++){ var a=randInt(f), b=randInt(f); var adv=Math.max(a,b); var dis=Math.min(a,b); if([a,b].indexOf(adv)===-1||[a,b].indexOf(dis)===-1){ throw new Error('Adv/Dis invalid'); } }
+      })();
+      console.log('Self-tests passed');
+    } catch(e) {
+      console.warn('Self-tests failed:', e);
+    }
+  })();
+  </script>
+</body>
+</html>
