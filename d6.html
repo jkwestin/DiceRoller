@@ -67,8 +67,8 @@
       <label>Success on ≥</label>
       <div class="count-control">
         <button id="decrTN" class="btn mod">–</button>
-        <div id="tnDisplay" class="mod-display">5</div>
-        <input id="tn" type="hidden" value="5"/>
+        <div id="tnDisplay" class="mod-display">6</div>
+        <input id="tn" type="hidden" value="6"/>
         <button id="incrTN" class="btn mod">+</button>
       </div>
     </div>
@@ -269,7 +269,7 @@
 
       var dicePart=(cnt>0?cnt:1)+'d6';
       var modeTxt = ({sum:'Sum',kh:'Keep Highest',kl:'Keep Lowest',succ:'Successes',explode:'Exploding 6s',reroll1:'Reroll 1s'})[state.mode] || '';
-      var tn = parseInt((document.getElementById('tn')||{value:5}).value,10);
+      var tn = parseInt((document.getElementById('tn')||{value:6}).value,10);
       var succTxt = (state.mode==='succ') ? (' (TN ≥ '+tn+')') : '';
       document.getElementById('settings').textContent='Current: '+dicePart+' | '+modeTxt+succTxt;
 
@@ -286,7 +286,7 @@
     function simulateDistribution(trials){
       if(typeof trials!=='number' || trials<=0) trials=10000;
       var cnt=parseInt(document.getElementById('count').value,10);
-      var tn=parseInt((document.getElementById('tn')||{value:5}).value,10);
+      var tn=parseInt((document.getElementById('tn')||{value:6}).value,10);
       var mode=state.mode;
       var freq=new Map();
 
