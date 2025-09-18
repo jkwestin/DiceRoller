@@ -159,6 +159,9 @@
 
     // ====== Roll Logic ======
     function performRoll(){
+      // ✅ hide charts + reset button text & step on every new roll
+      resetProbabilityUI();
+
       state.count=parseInt(document.getElementById('count').value,10);
       state.modifier=parseInt(document.getElementById('modifier').value,10);
       function oneRoll(n){ var rolls=basicRoll(state.faces,Math.max(1,n)); var s=0; for(var i=0;i<rolls.length;i++){ s+=rolls[i]; } return {rolls:rolls,sum:s}; }
