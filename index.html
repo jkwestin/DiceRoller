@@ -110,7 +110,7 @@
 
     var state={faces:6,count:1,modifier:0,mode:'normal',history:[]};
 
-    // ====== UI Builders ======
+    // ====== UI Builders ======>
     var diceRow=document.getElementById('diceRow');
     function buildDiceButtons(){
       diceRow.innerHTML='';
@@ -159,7 +159,7 @@
 
     // ====== Roll Logic ======
     function performRoll(){
-      // ✅ hide charts + reset button text & step on every new roll
+      // Hide probability visuals and reset state on every roll
       resetProbabilityUI();
 
       state.count=parseInt(document.getElementById('count').value,10);
@@ -194,9 +194,11 @@
       badge.textContent=a.mode==='adv'?'Advantage':(a.mode==='dis'?'Disadvantage':'');
       finalDiv.textContent='Total: '+finalVal;
 
-      // hide previous charts & stats on a fresh roll
-      document.getElementById('histCanvas').hidden=true;
-      document.getElementById('cdfCanvas').hidden=true;
+      // Extra safety: hide any lingering charts & stats when showing a new roll
+      var hist=document.getElementById('histCanvas');
+      var cdf=document.getElementById('cdfCanvas');
+      if(hist){ hist.hidden=true; hist.style.display='none'; }
+      if(cdf){ cdf.hidden=true; cdf.style.display='none'; }
       document.getElementById('probStats').textContent='';
 
       updateSettings();
@@ -220,10 +222,27 @@
     }
     function resetProbabilityUI(){
       probStepIdx=-1;
-      var btn=document.getElementById('probBtn'); if(btn) btn.textContent='Probability distribution';
-      var hist=document.getElementById('histCanvas'); if(hist) hist.hidden=true;
-      var cdf=document.getElementById('cdfCanvas'); if(cdf) cdf.hidden=true;
-      var stats=document.getElementById('probStats'); if(stats) stats.textContent='';
+
+      var btn=document.getElementById('probBtn');
+      if(btn) btn.textContent='Probability distribution';
+
+      var hist=document.getElementById('histCanvas');
+      var cdf=document.getElementById('cdfCanvas');
+      var stats=document.getElementById('probStats');
+
+      if(hist){
+        hist.hidden=true;
+        hist.style.display='none';
+        var hctx = hist.getContext && hist.getContext('2d');
+        if(hctx){ hctx.clearRect(0,0,hist.width||0,hist.height||0); }
+      }
+      if(cdf){
+        cdf.hidden=true;
+        cdf.style.display='none';
+        var cctx = cdf.getContext && cdf.getContext('2d');
+        if(cctx){ cctx.clearRect(0,0,cdf.width||0,cdf.height||0); }
+      }
+      if(stats) stats.textContent='';
     }
     function updateSettings(){
       var cnt=parseInt(document.getElementById('count').value,10);
@@ -264,7 +283,7 @@
         freq.set(v, (freq.get(v)||0)+1);
       }
       var keys=[]; freq.forEach(function(_,k){ keys.push(k); }); keys.sort(function(x,y){return x-y;});
-      var values=[]; for(var i2=0;i2<keys.length;i2++){ values.push(freq.get(keys[i2])); }
+      var values=[]; for(var i2=0;i<keys.length;i2++){ values.push(freq.get(keys[i2])); }
       return {keys:keys, values:values, trials:trials};
     }
 
@@ -343,13 +362,22 @@
     function runProbability(){
       if(probStepIdx<PROB_STEPS.length-1) probStepIdx+=1; // advance, capped
       var trials=PROB_STEPS[probStepIdx];
+
       var card=document.getElementById('currentCard'); card.hidden=false;
       document.getElementById('attempts').innerHTML='';
       document.getElementById('final').textContent='';
+
       var btn=document.getElementById('probBtn'); btn.textContent='Refine';
+
       var res=simulateDistribution(trials);
-      var hist=document.getElementById('histCanvas'); hist.hidden=false;
-      var cdf=document.getElementById('cdfCanvas'); cdf.hidden=false;
+
+      var hist=document.getElementById('histCanvas');
+      var cdf=document.getElementById('cdfCanvas');
+
+      // Ensure canvases are visible for drawing
+      if(hist){ hist.hidden=false; hist.style.display='block'; }
+      if(cdf){  cdf.hidden=false;  cdf.style.display='block'; }
+
       window.requestAnimationFrame(function(){
         drawHistogram(res.keys,res.values);
         drawCDF(res.keys,res.values);
@@ -391,10 +419,8 @@
     updateSettings();
 
     // ====== Minimal Self-Tests (console) ======
-    // These help catch obvious logic errors without affecting the UI
     try {
       console.assert(randInt(1)===1, 'randInt(1) should always be 1');
-      // Sum range for 3d6 should be between 3 and 18 (without modifier)
       (function(){
         var faces=6, n=3, trials=200;
         for(var i=0;i<trials;i++){
@@ -402,9 +428,13 @@
           if(s<3 || s>18){ throw new Error('3d6 sum out of range: '+s); }
         }
       })();
-      // Advantage/Disadvantage: result must be one of the two dice
       (function(){
-        var f=20; for(var i=0;i<100;i++){ var a=randInt(f), b=randInt(f); var adv=Math.max(a,b); var dis=Math.min(a,b); if([a,b].indexOf(adv)===-1||[a,b].indexOf(dis)===-1){ throw new Error('Adv/Dis invalid'); } }
+        var f=20; for(var i=0;i<100;i++){
+          var a=randInt(f), b=randInt(f);
+          var adv=Math.max(a,b);
+          var dis=Math.min(a,b);
+          if([a,b].indexOf(adv)===-1||[a,b].indexOf(dis)===-1){ throw new Error('Adv/Dis invalid'); }
+        }
       })();
       console.log('Self-tests passed');
     } catch(e) {
