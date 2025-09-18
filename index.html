@@ -32,10 +32,8 @@
     /* Charts */
     .chart { width:100%; height:240px; background:#0b1220; border:1px solid #334155; border-radius:6px; display:block; }
     .stats-note { font-size:12px; color:#94a3b8; margin-top:6px; }
-
-    /* Robust hide utility to avoid hidden/display conflicts */
-    .is-hidden { display:none !important; }
-
+    [hidden] { display: none !important; }
+    
     @media (max-width:600px){
       .btn { font-size:14px; padding:8px 10px; }
       .count-display, .mod-display { min-width:120px; }
@@ -85,9 +83,8 @@
       <h3>Result <span id="modeBadge" class="mode-label"></span></h3>
       <div id="attempts"></div>
       <div id="final"></div>
-      <!-- Start hidden via class; we won't rely on the hidden attribute anymore -->
-      <canvas id="histCanvas" class="chart is-hidden"></canvas>
-      <canvas id="cdfCanvas" class="chart is-hidden"></canvas>
+      <canvas id="histCanvas" class="chart" hidden></canvas>
+      <canvas id="cdfCanvas" class="chart" hidden></canvas>
       <div id="probStats" class="stats-note"></div>
     </section>
 
@@ -161,43 +158,11 @@
       return '<span class="roll-mid">'+v+'</span>';
     }
 
-    // ====== Chart visibility helpers ======
-    function hideCharts(){
-      var hist=document.getElementById('histCanvas');
-      var cdf=document.getElementById('cdfCanvas');
-      var stats=document.getElementById('probStats');
-      if(hist){
-        hist.classList.add('is-hidden');
-        var hctx = hist.getContext && hist.getContext('2d');
-        if(hctx){ hctx.clearRect(0,0,hist.width||0,hist.height||0); }
-      }
-      if(cdf){
-        cdf.classList.add('is-hidden');
-        var cctx = cdf.getContext && cdf.getContext('2d');
-        if(cctx){ cctx.clearRect(0,0,cdf.width||0,cdf.height||0); }
-      }
-      if(stats) stats.textContent='';
-    }
-    function showCharts(){
-      var hist=document.getElementById('histCanvas');
-      var cdf=document.getElementById('cdfCanvas');
-      if(hist) hist.classList.remove('is-hidden');
-      if(cdf)  cdf.classList.remove('is-hidden');
-    }
-
-    // ====== Probability UI Reset ======
-    function resetProbabilityUI(){
-      probStepIdx=-1;
-      var btn=document.getElementById('probBtn');
-      if(btn) btn.textContent='Probability distribution';
-      hideCharts();
-    }
-
     // ====== Roll Logic ======
     function performRoll(){
-      // Hide probability visuals and reset state on every roll
+      // Always reset probability UI when doing a new roll
       resetProbabilityUI();
-
+        
       state.count=parseInt(document.getElementById('count').value,10);
       state.modifier=parseInt(document.getElementById('modifier').value,10);
       function oneRoll(n){ var rolls=basicRoll(state.faces,Math.max(1,n)); var s=0; for(var i=0;i<rolls.length;i++){ s+=rolls[i]; } return {rolls:rolls,sum:s}; }
@@ -230,8 +195,10 @@
       badge.textContent=a.mode==='adv'?'Advantage':(a.mode==='dis'?'Disadvantage':'');
       finalDiv.textContent='Total: '+finalVal;
 
-      // Extra safety: hide any lingering charts & stats when showing a new roll
-      hideCharts();
+      // hide previous charts & stats on a fresh roll
+      document.getElementById('histCanvas').hidden=true;
+      document.getElementById('cdfCanvas').hidden=true;
+      document.getElementById('probStats').textContent='';
 
       updateSettings();
     }
@@ -251,6 +218,13 @@
       var c=parseInt(document.getElementById('count').value,10);
       var d=document.getElementById('countDisplay');
       d.textContent=(c===0)?'Advantage':((c===-1)?'Disadvantage':String(c));
+    }
+    function resetProbabilityUI(){
+      probStepIdx=-1;
+      var btn=document.getElementById('probBtn'); if(btn) btn.textContent='Probability distribution';
+      var hist=document.getElementById('histCanvas'); if(hist) hist.hidden=true;
+      var cdf=document.getElementById('cdfCanvas'); if(cdf) cdf.hidden=true;
+      var stats=document.getElementById('probStats'); if(stats) stats.textContent='';
     }
     function updateSettings(){
       var cnt=parseInt(document.getElementById('count').value,10);
@@ -291,7 +265,7 @@
         freq.set(v, (freq.get(v)||0)+1);
       }
       var keys=[]; freq.forEach(function(_,k){ keys.push(k); }); keys.sort(function(x,y){return x-y;});
-      var values=[]; for(var i2=0;i<keys.length;i2++){ values.push(freq.get(keys[i2])); }
+      var values=[]; for(var i2=0;i2<keys.length;i2++){ values.push(freq.get(keys[i2])); }
       return {keys:keys, values:values, trials:trials};
     }
 
@@ -370,19 +344,13 @@
     function runProbability(){
       if(probStepIdx<PROB_STEPS.length-1) probStepIdx+=1; // advance, capped
       var trials=PROB_STEPS[probStepIdx];
-
       var card=document.getElementById('currentCard'); card.hidden=false;
       document.getElementById('attempts').innerHTML='';
       document.getElementById('final').textContent='';
-
       var btn=document.getElementById('probBtn'); btn.textContent='Refine';
-
       var res=simulateDistribution(trials);
-
-      // Ensure canvases are visible for drawing
-      showCharts();
-
-      // Draw on next frame to ensure layout has updated
+      var hist=document.getElementById('histCanvas'); hist.hidden=false;
+      var cdf=document.getElementById('cdfCanvas'); cdf.hidden=false;
       window.requestAnimationFrame(function(){
         drawHistogram(res.keys,res.values);
         drawCDF(res.keys,res.values);
@@ -424,8 +392,10 @@
     updateSettings();
 
     // ====== Minimal Self-Tests (console) ======
+    // These help catch obvious logic errors without affecting the UI
     try {
       console.assert(randInt(1)===1, 'randInt(1) should always be 1');
+      // Sum range for 3d6 should be between 3 and 18 (without modifier)
       (function(){
         var faces=6, n=3, trials=200;
         for(var i=0;i<trials;i++){
@@ -433,13 +403,9 @@
           if(s<3 || s>18){ throw new Error('3d6 sum out of range: '+s); }
         }
       })();
+      // Advantage/Disadvantage: result must be one of the two dice
       (function(){
-        var f=20; for(var i=0;i<100;i++){
-          var a=randInt(f), b=randInt(f);
-          var adv=Math.max(a,b);
-          var dis=Math.min(a,b);
-          if([a,b].indexOf(adv)===-1||[a,b].indexOf(dis)===-1){ throw new Error('Adv/Dis invalid'); }
-        }
+        var f=20; for(var i=0;i<100;i++){ var a=randInt(f), b=randInt(f); var adv=Math.max(a,b); var dis=Math.min(a,b); if([a,b].indexOf(adv)===-1||[a,b].indexOf(dis)===-1){ throw new Error('Adv/Dis invalid'); } }
       })();
       console.log('Self-tests passed');
     } catch(e) {
