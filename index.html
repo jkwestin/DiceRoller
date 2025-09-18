@@ -5,26 +5,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>RPG Dice Roller</title>
   <style>
-    body { font-family: system-ui; background: #0f172a; color: #e5e7eb; margin:0; padding:0.5rem; display:flex; flex-direction:column; min-height:100vh; }
+    /* Layout & Theme */
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: #0f172a; color: #e5e7eb; margin:0; padding:0.5rem; display:flex; flex-direction:column; min-height:100vh; }
     header { margin-bottom:0.5rem; font-size:18px; }
+    .row { display:flex; flex-wrap:wrap; margin-bottom:8px; gap:6px; align-items:center; }
+    .card { background:#1e293b; padding:10px; border-radius:6px; margin-top:0.5rem; }
+    footer { margin-top:auto; font-size:12px; color:#94a3b8; text-align:center; padding:8px 0; }
+
+    /* Buttons & Inputs */
     .btn { background:#2563eb; color:white; border:none; padding:10px 14px; border-radius:6px; cursor:pointer; font-size:16px; margin:2px; }
-    .btn.ghost { background:#0b1730; border:1px solid #334155; }
+    .btn:hover { filter:brightness(1.1); }
     .btn.selected { background:#16a34a !important; }
     .btn.mod { background:#1e40af; }
-    .row { display:flex; flex-wrap:wrap; margin-bottom:8px; gap:6px; align-items:center; }
     .count-control, .mod-control { display:flex; align-items:center; }
     .count-control button, .mod-control button { font-size:20px; padding:8px 12px; margin:0 4px; }
-    .count-display, .mod-display { font-size:18px; min-width:140px; text-align:center; background:#1e293b; border-radius:6px; padding:8px 10px; border:1px solid #334155; }
-    .card { background:#1e293b; padding:10px; border-radius:6px; margin-top:0.5rem; }
-    .history-item { border-bottom:1px solid #334155; padding:4px 0; font-size:14px; }
+    .count-display, .mod-display { font-size:18px; min-width:140px; text-align:center; background:#0b1220; border-radius:6px; padding:8px 10px; border:1px solid #334155; }
+
+    /* Results */
     #settings { margin:6px 0; font-size:14px; color:#a3e635; }
+    .history-item { border-bottom:1px solid #334155; padding:4px 0; font-size:14px; }
+    .mode-label { font-weight:bold; color:#38bdf8; margin-left:6px; }
     .roll-low { color:#ef4444; }
     .roll-mid { color:#eab308; }
     .roll-high { color:#22c55e; }
-    .mode-label { font-weight:bold; color:#38bdf8; margin-left:6px; }
-    .chart { width:100%; height:240px; background:#0b1220; border:1px solid #334155; border-radius:6px; }
+
+    /* Charts */
+    .chart { width:100%; height:240px; background:#0b1220; border:1px solid #334155; border-radius:6px; display:block; }
     .stats-note { font-size:12px; color:#94a3b8; margin-top:6px; }
-    footer { margin-top:auto; font-size:12px; color:#94a3b8; text-align:center; padding:8px 0; }
+
     @media (max-width:600px){
       .btn { font-size:14px; padding:8px 10px; }
       .count-display, .mod-display { min-width:120px; }
@@ -32,380 +40,374 @@
   </style>
 </head>
 <body>
-<div class="container">
-  <header>🎲 RPG Dice Roller</header>
+  <div class="container">
+    <header>🎲 RPG Dice Roller</header>
 
-  <div class="row" id="diceRow"></div>
+    <!-- Dice selection -->
+    <div class="row" id="diceRow"></div>
 
-  <div class="row">
-    <label>Number of dices (Disadv., Adv, 1,2,...,20):</label>
-    <div class="count-control">
-      <button id="decrCount" class="btn">–</button>
-      <div id="countDisplay" class="count-display" aria-live="polite">1</div>
-      <input id="count" type="hidden" value="1" />
-      <button id="incrCount" class="btn">+</button>
+    <!-- Count row (0=Adv, -1=Dis, else dice count 1..20) -->
+    <div class="row">
+      <label>Number of dices (Disadv., Adv, 1,2,...,20):</label>
+      <div class="count-control">
+        <button id="decrCount" class="btn">–</button>
+        <div id="countDisplay" class="count-display" aria-live="polite">1</div>
+        <input id="count" type="hidden" value="1" />
+        <button id="incrCount" class="btn">+</button>
+      </div>
     </div>
-  </div>
 
-  <div class="row">
-    <label>Modifier:</label>
-    <div class="mod-control">
-      <button id="decrMod" class="btn mod">–</button>
-      <div id="modDisplay" class="mod-display">0</div>
-      <input id="modifier" type="hidden" value="0" />
-      <button id="incrMod" class="btn mod">+</button>
+    <!-- Modifier row -->
+    <div class="row">
+      <label>Modifier:</label>
+      <div class="mod-control">
+        <button id="decrMod" class="btn mod">–</button>
+        <div id="modDisplay" class="mod-display">0</div>
+        <input id="modifier" type="hidden" value="0" />
+        <button id="incrMod" class="btn mod">+</button>
+      </div>
     </div>
+
+    <!-- Actions -->
+    <div class="row">
+      <button id="rollBtn" class="btn">Roll</button>
+      <button id="probBtn" class="btn" title="Run Monte Carlo and show histogram">Probability distribution</button>
+    </div>
+
+    <!-- Live summary -->
+    <div id="settings"></div>
+
+    <!-- Results card -->
+    <section class="card" id="currentCard" hidden>
+      <h3>Result <span id="modeBadge" class="mode-label"></span></h3>
+      <div id="attempts"></div>
+      <div id="final"></div>
+      <canvas id="histCanvas" class="chart" hidden></canvas>
+      <canvas id="cdfCanvas" class="chart" hidden></canvas>
+      <div id="probStats" class="stats-note"></div>
+    </section>
+
+    <!-- History -->
+    <section class="card">
+      <h3>History <button id="clearHistory" class="btn small">Clear</button></h3>
+      <div id="history"></div>
+    </section>
   </div>
 
-  <div class="row">
-    <button id="rollBtn" class="btn">Roll</button>
-    <button id="probBtn" class="btn" title="Run Monte Carlo and show histogram">Probability distribution</button>
-  </div>
+  <footer>
+    Made by Jonas Westin © 2025
+  </footer>
 
-  <div id="settings"></div>
+  <script>
+  (function(){
+    'use strict';
 
-  <section class="card" id="currentCard" hidden>
-    <h3>Result <span id="modeBadge" class="mode-label"></span></h3>
-    <div id="attempts"></div>
-    <div id="final"></div>
-    <canvas id="histCanvas" class="chart" hidden></canvas>
-    <div id="probStats" class="stats-note"></div>
-  </section>
+    // ====== Config & State ======
+    var STORAGE_KEY='rpg_dice_history_v2';
+    var diceFaces=[2,3,4,6,8,10,12,20,30,60,100];
+    var PROB_STEPS=[1000,10000,50000,100000,200000];
+    var probStepIdx=-1; // -1 means not started
 
-  <section class="card">
-    <h3>History <button id="clearHistory" class="btn small">Clear</button></h3>
-    <div id="history"></div>
-  </section>
-</div>
+    var state={faces:6,count:1,modifier:0,mode:'normal',history:[]};
 
-<footer>
-  Made by Jonas Westin © 2025
-</footer>
+    // ====== UI Builders ======
+    var diceRow=document.getElementById('diceRow');
+    function buildDiceButtons(){
+      diceRow.innerHTML='';
+      for(var i=0;i<diceFaces.length;i++){
+        (function(f){
+          var b=document.createElement('button');
+          b.textContent='d'+f;
+          b.className='btn';
+          if(f===state.faces) b.classList.add('selected');
+          b.onclick=function(){ state.faces=f; updateSettings(); highlightSelectedDice(); };
+          diceRow.appendChild(b);
+        })(diceFaces[i]);
+      }
+    }
+    function highlightSelectedDice(){
+      var buttons=diceRow.querySelectorAll('button');
+      for(var i=0;i<buttons.length;i++){
+        var btn=buttons[i];
+        btn.classList.remove('selected');
+        if(btn.textContent==='d'+state.faces){ btn.classList.add('selected'); }
+      }
+    }
 
-<script>
-const STORAGE_KEY='rpg_dice_history_v2';
-const diceFaces=[2,3,4,6,8,10,12,20,30,60,100];
-const diceRow=document.getElementById('diceRow');
+    // ====== RNG ======
+    function randInt(max){
+      if(window.crypto && window.crypto.getRandomValues){
+        var array = new Uint32Array(1);
+        window.crypto.getRandomValues(array);
+        return (array[0] % max) + 1;
+      } else {
+        return Math.floor(Math.random()*max)+1;
+      }
+    }
 
-const state={faces:6,count:1,modifier:0,mode:'normal',history:[]};
-const PROB_STEPS=[1000,10000,50000,100000,200000];
-let probStepIdx=-1; // -1 means not started
+    // ====== Core Helpers ======
+    function basicRoll(faces,count){
+      var rolls=[]; for(var i=0;i<count;i++){ rolls.push(randInt(faces)); } return rolls;
+    }
+    function colorizeRoll(v,f){
+      if(v===1) return '<span class="roll-low">'+v+'</span>';
+      if(v===f) return '<span class="roll-high">'+v+'</span>';
+      if(v<=Math.ceil(f/3)) return '<span class="roll-low">'+v+'</span>';
+      if(v>=Math.floor(2*f/3)) return '<span class="roll-high">'+v+'</span>';
+      return '<span class="roll-mid">'+v+'</span>';
+    }
 
-function buildDiceButtons(){
-  diceRow.innerHTML='';
-  diceFaces.forEach(f=>{
-    const b=document.createElement('button');
-    b.textContent='d'+f;
-    b.className='btn';
-    if(f===state.faces) b.classList.add('selected');
-    b.onclick=()=>{
-      state.faces=f;
+    // ====== Roll Logic ======
+    function performRoll(){
+      state.count=parseInt(document.getElementById('count').value,10);
+      state.modifier=parseInt(document.getElementById('modifier').value,10);
+      function oneRoll(n){ var rolls=basicRoll(state.faces,Math.max(1,n)); var s=0; for(var i=0;i<rolls.length;i++){ s+=rolls[i]; } return {rolls:rolls,sum:s}; }
+
+      var attempt;
+      if(state.count>0){ var a=oneRoll(state.count); attempt={rolls:a.rolls,sum:a.sum,mode:'normal'}; state.mode='normal'; }
+      else if(state.count===0){ var r1=randInt(state.faces), r2=randInt(state.faces); attempt={rolls:[r1,r2], sum:Math.max(r1,r2), mode:'adv'}; state.mode='adv'; }
+      else if(state.count===-1){ var r3=randInt(state.faces), r4=randInt(state.faces); attempt={rolls:[r3,r4], sum:Math.min(r3,r4), mode:'dis'}; state.mode='dis'; }
+      else { var b=oneRoll(1); attempt={rolls:b.rolls,sum:b.sum,mode:'normal'}; state.mode='normal'; }
+
+      var finalTotal=attempt.sum + state.modifier;
+      renderCurrent([attempt],finalTotal);
+      state.history.unshift({t:Date.now(), attempt:attempt, final:finalTotal, faces:state.faces});
+      saveHistory(); renderHistory();
+    }
+
+    // ====== Rendering ======
+    function renderCurrent(attempts,finalVal){
+      var card=document.getElementById('currentCard'); card.hidden=false;
+      var attemptsEl=document.getElementById('attempts'); attemptsEl.innerHTML='';
+      var finalDiv=document.getElementById('final');
+      var badge=document.getElementById('modeBadge');
+
+      var a=attempts[0];
+      var colored=''; for(var i=0;i<a.rolls.length;i++){ colored += (i? ', ':'') + colorizeRoll(a.rolls[i],state.faces); }
+      var arrow=(a.mode==='adv'||a.mode==='dis') ? ' → <strong>'+a.sum+'</strong>' : ' ⇒ <strong>'+a.sum+'</strong>';
+      var line='<span>['+colored+']</span>'+arrow;
+      var div=document.createElement('div'); div.className='history-item'; div.innerHTML=line; attemptsEl.appendChild(div);
+
+      badge.textContent=a.mode==='adv'?'Advantage':(a.mode==='dis'?'Disadvantage':'');
+      finalDiv.textContent='Total: '+finalVal;
+
+      // hide previous charts & stats on a fresh roll
+      document.getElementById('histCanvas').hidden=true;
+      document.getElementById('cdfCanvas').hidden=true;
+      document.getElementById('probStats').textContent='';
+
       updateSettings();
+    }
+    function renderHistory(){
+      var hEl=document.getElementById('history'); hEl.innerHTML='';
+      for(var i=0;i<state.history.length;i++){
+        var h=state.history[i]; var a=h.attempt;
+        var colored=''; for(var j=0;j<a.rolls.length;j++){ colored += (j? ', ':'') + colorizeRoll(a.rolls[j],h.faces); }
+        var arrow=(a.mode==='adv'||a.mode==='dis') ? ' → <strong>'+a.sum+'</strong>' : ' ⇒ <strong>'+a.sum+'</strong>';
+        var modeLbl=(a.mode==='adv') ? ' <span class="mode-label">Advantage</span>' : (a.mode==='dis' ? ' <span class="mode-label">Disadvantage</span>' : '');
+        hEl.innerHTML += '<div class="history-item">'+ new Date(h.t).toLocaleTimeString() + modeLbl + '<br/>['+colored+']'+arrow+'  |  Total: <strong>'+h.final+'</strong></div>';
+      }
+    }
+
+    // ====== Settings & Display ======
+    function updateCountDisplay(){
+      var c=parseInt(document.getElementById('count').value,10);
+      var d=document.getElementById('countDisplay');
+      d.textContent=(c===0)?'Advantage':((c===-1)?'Disadvantage':String(c));
+    }
+    function resetProbabilityUI(){
+      probStepIdx=-1;
+      var btn=document.getElementById('probBtn'); if(btn) btn.textContent='Probability distribution';
+      var hist=document.getElementById('histCanvas'); if(hist) hist.hidden=true;
+      var cdf=document.getElementById('cdfCanvas'); if(cdf) cdf.hidden=true;
+      var stats=document.getElementById('probStats'); if(stats) stats.textContent='';
+    }
+    function updateSettings(){
+      var cnt=parseInt(document.getElementById('count').value,10);
+      state.count=cnt;
+      state.modifier=parseInt(document.getElementById('modifier').value,10) || 0;
+      updateCountDisplay();
+      document.getElementById('modDisplay').textContent=state.modifier;
       highlightSelectedDice();
+      var modTxt = state.modifier===0 ? '' : (state.modifier>0?('+'+state.modifier):(String(state.modifier)));
+      var dicePart=(cnt>0?cnt:1)+'d'+state.faces;
+      if(cnt===0) dicePart='Adv d'+state.faces;
+      if(cnt===-1) dicePart='Dis d'+state.faces;
+      document.getElementById('settings').textContent='Current: '+dicePart+modTxt;
+      // reset probability when setup changes
+      resetProbabilityUI();
+    }
+
+    // ====== Storage ======
+    function saveHistory(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state.history)); }catch(e){} }
+    function loadHistory(){ try{ var raw=localStorage.getItem(STORAGE_KEY); if(raw){ var arr=JSON.parse(raw); if(Array.isArray(arr)) state.history=arr; } }catch(e){} }
+    function clearSavedHistory(){ try{ localStorage.removeItem(STORAGE_KEY); }catch(e){} }
+
+    // ====== Probability (Monte Carlo) ======
+    function simulateDistribution(trials){
+      if(typeof trials!=='number' || trials<=0) trials=10000;
+      var cnt=parseInt(document.getElementById('count').value,10);
+      var faces=state.faces;
+      var mod=parseInt(document.getElementById('modifier').value,10) || 0;
+      var freq=new Map();
+      function rollOnce(){
+        var a,b,tot,i;
+        if(cnt>0){ tot=0; for(i=0;i<cnt;i++){ tot+=randInt(faces); } return tot+mod; }
+        else if(cnt===0){ a=randInt(faces); b=randInt(faces); return Math.max(a,b)+mod; }
+        else { a=randInt(faces); b=randInt(faces); return Math.min(a,b)+mod; }
+      }
+      for(var t=0;t<trials;t++){
+        var v=rollOnce();
+        freq.set(v, (freq.get(v)||0)+1);
+      }
+      var keys=[]; freq.forEach(function(_,k){ keys.push(k); }); keys.sort(function(x,y){return x-y;});
+      var values=[]; for(var i2=0;i2<keys.length;i2++){ values.push(freq.get(keys[i2])); }
+      return {keys:keys, values:values, trials:trials};
+    }
+
+    function setupCanvas(canvas){
+      var dpr=window.devicePixelRatio||1;
+      var rect=canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : {width:canvas.clientWidth, height:canvas.clientHeight};
+      var cssW=Math.max(280,(rect.width||canvas.clientWidth||320));
+      var cssH=canvas.clientHeight||240;
+      canvas.width=Math.floor(cssW*dpr);
+      canvas.height=Math.floor(cssH*dpr);
+      var ctx=canvas.getContext('2d');
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      return {ctx:ctx, cssW:cssW, cssH:cssH};
+    }
+
+    function drawHistogram(keys,values){
+      var canvas=document.getElementById('histCanvas');
+      var conf=setupCanvas(canvas), ctx=conf.ctx, cssW=conf.cssW, cssH=conf.cssH;
+      // background
+      ctx.fillStyle='#0b1220'; ctx.fillRect(0,0,cssW,cssH);
+      // layout
+      var padL=36,padR=10,padT=10,padB=26; var W=cssW-padL-padR, H=cssH-padT-padB;
+      // axes
+      ctx.strokeStyle='#334155'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(padL,padT); ctx.lineTo(padL,padT+H); ctx.lineTo(padL+W,padT+H); ctx.stroke();
+      // bars
+      var maxVal=0; for(var i=0;i<values.length;i++){ if(values[i]>maxVal) maxVal=values[i]; }
+      var barW=Math.max(1, Math.floor(W/Math.max(1,keys.length)) - 2);
+      for(var j=0;j<keys.length;j++){
+        var x=padL + j*(barW+2);
+        var h=maxVal>0 ? Math.round((values[j]/maxVal)*H) : 0;
+        var y=padT + (H - h);
+        ctx.fillStyle='#60a5fa';
+        ctx.fillRect(x,y,barW,h);
+      }
+      // x ticks
+      ctx.fillStyle='#94a3b8'; ctx.font='12px system-ui'; ctx.textAlign='center';
+      var step=Math.ceil(keys.length/10); if(step<1) step=1;
+      for(var k=0;k<keys.length;k+=step){ var xt=padL + k*(barW+2) + barW/2; ctx.fillText(String(keys[k]), xt, padT+H+16); }
+    }
+
+    function drawCDF(keys, values){
+      var canvas=document.getElementById('cdfCanvas');
+      var conf=setupCanvas(canvas), ctx=conf.ctx, cssW=conf.cssW, cssH=conf.cssH;
+      // background
+      ctx.fillStyle='#0b1220'; ctx.fillRect(0,0,cssW,cssH);
+      // layout
+      var padL=36,padR=10,padT=10,padB=26; var W=cssW-padL-padR, H=cssH-padT-padB;
+      // grid
+      ctx.strokeStyle='#233044'; ctx.lineWidth=1;
+      var gridRows=5, gridCols=10, r;
+      for(r=0;r<=gridRows;r++){ var gy=padT + (H*r/gridRows); ctx.beginPath(); ctx.moveTo(padL,gy); ctx.lineTo(padL+W,gy); ctx.stroke(); }
+      for(r=0;r<=gridCols;r++){ var gx=padL + (W*r/gridCols); ctx.beginPath(); ctx.moveTo(gx,padT); ctx.lineTo(gx,padT+H); ctx.stroke(); }
+      // axes
+      ctx.strokeStyle='#334155'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(padL,padT); ctx.lineTo(padL,padT+H); ctx.lineTo(padL+W,padT+H); ctx.stroke();
+      // cumulative data
+      var total=0; for(var i=0;i<values.length;i++){ total+=values[i]; }
+      var cum=[]; var acc=0; for(var j=0;j<values.length;j++){ acc+=values[j]; cum.push(total? (acc/total) : 0); }
+      // red thick line
+      ctx.strokeStyle='#ef4444'; ctx.lineWidth=3; ctx.beginPath();
+      var n=Math.max(1,keys.length-1);
+      for(var t=0;t<keys.length;t++){
+        var x=padL + (W * (n===0?0:(t/n)));
+        var y=padT + (H * (1 - cum[t]));
+        if(t===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.stroke();
+      // y-axis 0..1
+      ctx.fillStyle='#94a3b8'; ctx.font='12px system-ui'; ctx.textAlign='right';
+      for(r=0;r<=gridRows;r++){ var p=r/gridRows; var yy=padT + (H*(1-p)); ctx.fillText(p.toFixed(1), padL-6, yy+4); }
+      // x-axis sparse labels mirror histogram
+      ctx.textAlign='center';
+      var step=Math.ceil(keys.length/10); if(step<1) step=1;
+      for(var m=0;m<keys.length;m+=step){ var xx=padL + (W * (n===0?0:(m/n))); ctx.fillText(String(keys[m]), xx, padT+H+16); }
+    }
+
+    function runProbability(){
+      if(probStepIdx<PROB_STEPS.length-1) probStepIdx+=1; // advance, capped
+      var trials=PROB_STEPS[probStepIdx];
+      var card=document.getElementById('currentCard'); card.hidden=false;
+      document.getElementById('attempts').innerHTML='';
+      document.getElementById('final').textContent='';
+      var btn=document.getElementById('probBtn'); btn.textContent='Refine';
+      var res=simulateDistribution(trials);
+      var hist=document.getElementById('histCanvas'); hist.hidden=false;
+      var cdf=document.getElementById('cdfCanvas'); cdf.hidden=false;
+      window.requestAnimationFrame(function(){
+        drawHistogram(res.keys,res.values);
+        drawCDF(res.keys,res.values);
+        var total=0; for(var i=0;i<res.values.length;i++){ total+=res.values[i]; }
+        var sum=0; for(var j=0;j<res.keys.length;j++){ sum += res.keys[j]*res.values[j]; }
+        var mean = total? (sum/total).toFixed(2) : '0.00';
+        var min=res.keys[0]||0, max=(res.keys.length?res.keys[res.keys.length-1]:0);
+        var maxF=0; for(var k=0;k<res.values.length;k++){ if(res.values[k]>maxF) maxF=res.values[k]; }
+        var modes=[]; for(var t=0;t<res.keys.length;t++){ if(res.values[t]===maxF) modes.push(res.keys[t]); }
+        document.getElementById('probStats').textContent='Simulated '+ trials.toLocaleString() +' rolls → mean '+ mean +', range '+ min +'–'+ max +', mode '+ modes.join(', ');
+      });
+    }
+
+    // ====== Wire Up ======
+    document.getElementById('rollBtn').onclick=performRoll;
+    document.getElementById('probBtn').onclick=runProbability;
+    document.getElementById('clearHistory').onclick=function(){ if(confirm('Clear history?')){ state.history=[]; clearSavedHistory(); renderHistory(); } };
+
+    document.getElementById('decrCount').onclick=function(){
+      var hidden=document.getElementById('count');
+      var v=parseInt(hidden.value,10); if(isNaN(v)) v=1;
+      if(v>1) v--; else if(v===1) v=0; else if(v===0) v=-1; else v=-1;
+      hidden.value=v; updateSettings();
     };
-    diceRow.appendChild(b);
-  });
-}
+    document.getElementById('incrCount').onclick=function(){
+      var hidden=document.getElementById('count');
+      var v=parseInt(hidden.value,10); if(isNaN(v)) v=1;
+      if(v===-1) v=0; else if(v===0) v=1; else if(v<20) v++;
+      hidden.value=v; updateSettings();
+    };
 
-function highlightSelectedDice(){
-  const buttons=diceRow.querySelectorAll('button');
-  buttons.forEach(btn=>{
-    btn.classList.remove('selected');
-    if(btn.textContent==='d'+state.faces){
-      btn.classList.add('selected');
+    document.getElementById('decrMod').onclick=function(){ var v=parseInt(document.getElementById('modifier').value,10)||0; document.getElementById('modifier').value=v-1; updateSettings(); };
+    document.getElementById('incrMod').onclick=function(){ var v=parseInt(document.getElementById('modifier').value,10)||0; document.getElementById('modifier').value=v+1; updateSettings(); };
+
+    // ====== Init ======
+    buildDiceButtons();
+    loadHistory();
+    renderHistory();
+    updateSettings();
+
+    // ====== Minimal Self-Tests (console) ======
+    // These help catch obvious logic errors without affecting the UI
+    try {
+      console.assert(randInt(1)===1, 'randInt(1) should always be 1');
+      // Sum range for 3d6 should be between 3 and 18 (without modifier)
+      (function(){
+        var faces=6, n=3, trials=200;
+        for(var i=0;i<trials;i++){
+          var s=0; for(var j=0;j<n;j++){ s+=Math.min(faces,Math.max(1,randInt(faces))); }
+          if(s<3 || s>18){ throw new Error('3d6 sum out of range: '+s); }
+        }
+      })();
+      // Advantage/Disadvantage: result must be one of the two dice
+      (function(){
+        var f=20; for(var i=0;i<100;i++){ var a=randInt(f), b=randInt(f); var adv=Math.max(a,b); var dis=Math.min(a,b); if([a,b].indexOf(adv)===-1||[a,b].indexOf(dis)===-1){ throw new Error('Adv/Dis invalid'); } }
+      })();
+      console.log('Self-tests passed');
+    } catch(e) {
+      console.warn('Self-tests failed:', e);
     }
-  });
-}
-
-// Improved randomness using crypto API when available
-function randInt(max){
-  if(window.crypto && window.crypto.getRandomValues){
-    const array = new Uint32Array(1);
-    window.crypto.getRandomValues(array);
-    return (array[0] % max) + 1;
-  } else {
-    return Math.floor(Math.random()*max)+1;
-  }
-}
-
-function basicRoll(faces,count){
-  const rolls=[];
-  for(let i=0;i<count;i++) rolls.push(randInt(faces));
-  return rolls;
-}
-
-function colorizeRoll(value,faces){
-  if(value===1) return `<span class="roll-low">${value}</span>`;
-  if(value===faces) return `<span class="roll-high">${value}</span>`;
-  if(value<=Math.ceil(faces/3)) return `<span class="roll-low">${value}</span>`;
-  if(value>=Math.floor(2*faces/3)) return `<span class="roll-high">${value}</span>`;
-  return `<span class="roll-mid">${value}</span>`;
-}
-
-function performRoll(){
-  state.count=parseInt(document.getElementById('count').value);
-  state.modifier=parseInt(document.getElementById('modifier').value);
-
-  function oneRoll(numDice){
-    const n = Math.max(1, numDice|0);
-    const rolls=basicRoll(state.faces, n);
-    const sum=rolls.reduce((a,b)=>a+b,0);
-    return {rolls,sum};
-  }
-
-  let attempt;
-  if(state.count>0){
-    const a=oneRoll(state.count);
-    attempt={ rolls:a.rolls, sum:a.sum, mode:'normal' };
-    state.mode='normal';
-  } else if(state.count===0){
-    const r1=basicRoll(state.faces,1)[0];
-    const r2=basicRoll(state.faces,1)[0];
-    attempt={ rolls:[r1,r2], sum:Math.max(r1,r2), mode:'adv' };
-    state.mode='adv';
-  } else if(state.count===-1){
-    const r1=basicRoll(state.faces,1)[0];
-    const r2=basicRoll(state.faces,1)[0];
-    attempt={ rolls:[r1,r2], sum:Math.min(r1,r2), mode:'dis' };
-    state.mode='dis';
-  } else {
-    const a=oneRoll(1);
-    attempt={ rolls:a.rolls, sum:a.sum, mode:'normal' };
-    state.mode='normal';
-  }
-
-  const final=attempt.sum + state.modifier;
-  renderCurrent([attempt], final);
-  state.history.unshift({t:Date.now(), attempt, final, faces:state.faces});
-  saveHistory();
-  renderHistory();
-}
-
-function renderCurrent(attempts,final){
-  currentCard.hidden=false;
-  const attemptsEl=document.getElementById('attempts');
-  const finalDiv=document.getElementById('final');
-  const badge=document.getElementById('modeBadge');
-  attemptsEl.innerHTML='';
-
-  const a=attempts[0];
-  const colored=a.rolls.map(r=>colorizeRoll(r,state.faces)).join(', ');
-  const arrowResult = (a.mode==='adv' || a.mode==='dis') ? ` → <strong>${a.sum}</strong>` : ' ⇒ <strong>'+a.sum+'</strong>';
-  const line = `<span>[${colored}]</span>${arrowResult}`;
-  const div=document.createElement('div');
-  div.className='history-item';
-  div.innerHTML=line;
-  attemptsEl.appendChild(div);
-
-  badge.textContent = a.mode==='adv' ? 'Advantage' : a.mode==='dis' ? 'Disadvantage' : '';
-  finalDiv.textContent='Total: '+final;
-  // hide any previous chart by default (it will be shown when probBtn is used)
-  document.getElementById('histCanvas').hidden = true;
-  document.getElementById('probStats').textContent = '';
-  updateSettings();
-}
-
-function renderHistory(){
-  const historyEl=document.getElementById('history');
-  historyEl.innerHTML='';
-  state.history.forEach(h=>{
-    const div=document.createElement('div');
-    div.className='history-item';
-    const time=new Date(h.t).toLocaleTimeString();
-    const a=h.attempt;
-    const colored=a.rolls.map(r=>colorizeRoll(r,h.faces)).join(', ');
-    const arrowResult = (a.mode==='adv' || a.mode==='dis') ? ` → <strong>${a.sum}</strong>` : ` ⇒ <strong>${a.sum}</strong>`;
-    const modeLabel = a.mode==='adv' ? ' <span class="mode-label">Advantage</span>' : a.mode==='dis' ? ' <span class="mode-label">Disadvantage</span>' : '';
-    div.innerHTML=`${time}${modeLabel}<br/>[${colored}]${arrowResult}  |  Total: <strong>${h.final}</strong>`;
-    historyEl.appendChild(div);
-  });
-}
-
-function updateCountDisplay(){
-  const cnt = parseInt(document.getElementById('count').value);
-  const disp = document.getElementById('countDisplay');
-  if (cnt===0) disp.textContent='Advantage';
-  else if (cnt===-1) disp.textContent='Disadvantage';
-  else disp.textContent=String(cnt);
-}
-
-function resetProbabilityUI(){
-  probStepIdx = -1;
-  const btn = document.getElementById('probBtn');
-  if (btn) btn.textContent = 'Probability distribution';
-  const canvas=document.getElementById('histCanvas');
-  if (canvas) canvas.hidden = true;
-  const stats=document.getElementById('probStats');
-  if (stats) stats.textContent = '';
-}
-
-function updateSettings(){
-  const cnt=parseInt(document.getElementById('count').value);
-  state.count=cnt;
-  state.modifier=parseInt(document.getElementById('modifier').value)||0;
-  updateCountDisplay();
-  document.getElementById('modDisplay').textContent = state.modifier;
-  highlightSelectedDice();
-  const modTxt = state.modifier===0 ? '' : (state.modifier>0?`+${state.modifier}`:`${state.modifier}`);
-  let dicePart = (cnt>0? cnt : 1) + 'd' + state.faces;
-  if(cnt===0) dicePart = 'Adv d'+state.faces;
-  if(cnt===-1) dicePart = 'Dis d'+state.faces;
-  document.getElementById('settings').textContent = `Current: ${dicePart}${modTxt}`;
-  // reset refine cycle on any setup change
-  resetProbabilityUI();
-}
-
-function saveHistory(){
-  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state.history)); }catch{}
-}
-function loadHistory(){
-  try{ const raw=localStorage.getItem(STORAGE_KEY); if(raw){ const arr=JSON.parse(raw); if(Array.isArray(arr)) state.history=arr; } }catch{}
-}
-function clearSavedHistory(){
-  try{ localStorage.removeItem(STORAGE_KEY); }catch{}
-}
-
-// ---- Monte Carlo simulation & Histogram drawing ----
-function simulateDistribution(trials=10000){
-  const cnt = parseInt(document.getElementById('count').value);
-  const faces = state.faces;
-  const mod = parseInt(document.getElementById('modifier').value)||0;
-  const freq = new Map();
-
-  function rollOnce(){
-    if(cnt>0){
-      let total=0; for(let i=0;i<cnt;i++) total += randInt(faces);
-      return total + mod;
-    } else if(cnt===0){ // Advantage: roll 1 die twice, keep max
-      const a=randInt(faces), b=randInt(faces);
-      return Math.max(a,b) + mod;
-    } else { // Disadvantage: -1
-      const a=randInt(faces), b=randInt(faces);
-      return Math.min(a,b) + mod;
-    }
-  }
-
-  for(let t=0;t<trials;t++){
-    const v=rollOnce();
-    freq.set(v, (freq.get(v)||0)+1);
-  }
-  // Convert to sorted arrays
-  const keys=[...freq.keys()].sort((a,b)=>a-b);
-  const values=keys.map(k=>freq.get(k));
-  return {keys, values, trials};
-}
-
-function drawHistogram(keys, values){
-  const canvas=document.getElementById('histCanvas');
-  const dpr=window.devicePixelRatio||1;
-  const rect = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : {width:canvas.clientWidth};
-  const cssW = Math.max(280, (rect.width||canvas.clientWidth||320));
-  const cssH = canvas.clientHeight||240;
-  canvas.width = Math.floor(cssW*dpr);
-  canvas.height = Math.floor(cssH*dpr);
-  const ctx=canvas.getContext('2d');
-  ctx.scale(dpr,dpr);
-  // Clear
-  ctx.fillStyle='#0b1220'; ctx.fillRect(0,0,cssW,cssH);
-  // Padding
-  const padL=36, padR=10, padT=10, padB=26;
-  const W=cssW-padL-padR, H=cssH-padT-padB;
-  // Axes
-  ctx.strokeStyle='#334155'; ctx.lineWidth=1;
-  ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT+H); ctx.lineTo(padL+W, padT+H); ctx.stroke();
-  // Bars
-  const maxVal=Math.max(...values);
-  const barW = Math.max(1, Math.floor(W/keys.length)-2);
-  for(let i=0;i<keys.length;i++){
-    const x = padL + i*(barW+2);
-    const h = maxVal>0 ? Math.round((values[i]/maxVal)*H) : 0;
-    const y = padT + (H - h);
-    ctx.fillStyle='#60a5fa';
-    ctx.fillRect(x, y, barW, h);
-  }
-  // X-axis ticks (sparse)
-  ctx.fillStyle='#94a3b8'; ctx.font='12px system-ui'; ctx.textAlign='center';
-  const step=Math.ceil(keys.length/10);
-  for(let i=0;i<keys.length;i+=step){
-    const x = padL + i*(barW+2) + barW/2;
-    ctx.fillText(String(keys[i]), x, padT+H+16);
-  }
-}
-
-function runProbability(){
-  // step through 1k -> 10k -> 50k -> 100k -> 200k -> 200k...
-  if (probStepIdx < PROB_STEPS.length - 1) probStepIdx += 1;
-  const trials = PROB_STEPS[probStepIdx];
-
-  // Show result card, clear attempts & total
-  const card = document.getElementById('currentCard');
-  card.hidden = false;
-  document.getElementById('attempts').innerHTML = '';
-  document.getElementById('final').textContent = '';
-
-  // Update button label to Refine after first press
-  const btn = document.getElementById('probBtn');
-  btn.textContent = 'Refine';
-
-  // Simulate and draw
-  const {keys, values} = simulateDistribution(trials);
-  const canvas=document.getElementById('histCanvas');
-  canvas.hidden=false;
-  requestAnimationFrame(()=>{
-    drawHistogram(keys, values);
-    const totalCount = values.reduce((a,b)=>a+b,0);
-    const mean = (keys.reduce((acc,k,i)=>acc + k*values[i],0)/totalCount).toFixed(2);
-    const min=keys[0], max=keys[keys.length-1];
-    const maxFreq=Math.max(...values);
-    const modes=keys.filter((k,i)=>values[i]===maxFreq);
-    document.getElementById('probStats').textContent = `Simulated ${trials.toLocaleString()} rolls → mean ${mean}, range ${min}–${max}, mode ${modes.join(', ')}`;
-  });
-}
-
-// UI wiring
-rollBtn.onclick=performRoll;
-probBtn.onclick=runProbability;
-clearHistory.onclick=()=>{ if(confirm('Clear history?')){ state.history=[]; clearSavedHistory(); renderHistory(); } };
-
-decrCount.onclick=()=>{
-  const hidden=document.getElementById('count');
-  let v=parseInt(hidden.value);
-  if(isNaN(v)) v=1;
-  if(v>1){ v=v-1; }
-  else if(v===1){ v=0; }
-  else if(v===0){ v=-1; }
-  else { v=-1; }
-  hidden.value=v; updateSettings();
-};
-
-incrCount.onclick=()=>{
-  const hidden=document.getElementById('count');
-  let v=parseInt(hidden.value);
-  if(isNaN(v)) v=1;
-  if(v===-1){ v=0; }
-  else if(v===0){ v=1; }
-  else if(v<20){ v=v+1; }
-  hidden.value=v; updateSettings();
-};
-
-// Modifier +/-
-decrMod.onclick=()=>{ const v=parseInt(document.getElementById('modifier').value)||0; document.getElementById('modifier').value = v-1; updateSettings(); };
-incrMod.onclick=()=>{ const v=parseInt(document.getElementById('modifier').value)||0; document.getElementById('modifier').value = v+1; updateSettings(); };
-
-// Storage
-function saveHistory(){
-  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state.history)); }catch{}
-}
-function loadHistory(){
-  try{ const raw=localStorage.getItem(STORAGE_KEY); if(raw){ const arr=JSON.parse(raw); if(Array.isArray(arr)) state.history=arr; } }catch{}
-}
-function clearSavedHistory(){ try{ localStorage.removeItem(STORAGE_KEY); }catch{} }
-
-// Init
-buildDiceButtons();
-loadHistory();
-renderHistory();
-updateSettings();
-</script>
+  })();
+  </script>
 </body>
 </html>
