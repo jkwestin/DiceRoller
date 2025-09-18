@@ -9,24 +9,25 @@
     header { margin-bottom:0.5rem; font-size:18px; }
     .btn { background:#2563eb; color:white; border:none; padding:10px 14px; border-radius:6px; cursor:pointer; font-size:16px; margin:2px; }
     .btn.ghost { background:#0b1730; border:1px solid #334155; }
-    .btn.selected { background:#16a34a !important; } /* highlight selected dice */
-    .btn.mod { background:#1e40af; } /* blue modifier +/- */
+    .btn.selected { background:#16a34a !important; }
+    .btn.mod { background:#1e40af; }
     .row { display:flex; flex-wrap:wrap; margin-bottom:8px; gap:6px; align-items:center; }
     .count-control, .mod-control { display:flex; align-items:center; }
     .count-control button, .mod-control button { font-size:20px; padding:8px 12px; margin:0 4px; }
     .count-display, .mod-display { font-size:18px; min-width:140px; text-align:center; background:#1e293b; border-radius:6px; padding:8px 10px; border:1px solid #334155; }
     .card { background:#1e293b; padding:10px; border-radius:6px; margin-top:0.5rem; }
     .history-item { border-bottom:1px solid #334155; padding:4px 0; font-size:14px; }
-    input[type=number] { padding:6px; border-radius:4px; border:none; font-size:16px; width:100px; }
     #settings { margin:6px 0; font-size:14px; color:#a3e635; }
     .roll-low { color:#ef4444; }
     .roll-mid { color:#eab308; }
     .roll-high { color:#22c55e; }
     .mode-label { font-weight:bold; color:#38bdf8; margin-left:6px; }
+    .chart { width:100%; height:240px; background:#0b1220; border:1px solid #334155; border-radius:6px; }
+    .stats-note { font-size:12px; color:#94a3b8; margin-top:6px; }
+    .select { background:#1e293b; color:#e5e7eb; border:1px solid #334155; border-radius:6px; padding:8px 10px; font-size:16px; }
     @media (max-width:600px){
       .btn { font-size:14px; padding:8px 10px; }
       .count-display, .mod-display { min-width:120px; }
-      input[type=number] { width:90px; }
     }
   </style>
 </head>
@@ -34,10 +35,8 @@
 <div class="container">
   <header>🎲 RPG Dice Roller</header>
 
-  <!-- Dice selection row -->
   <div class="row" id="diceRow"></div>
 
-  <!-- Count row -->
   <div class="row">
     <label>Number of dices (Disadv., Adv, 1,2,...,20):</label>
     <div class="count-control">
@@ -48,7 +47,6 @@
     </div>
   </div>
 
-  <!-- Modifier row with +/- buttons -->
   <div class="row">
     <label>Modifier:</label>
     <div class="mod-control">
@@ -61,6 +59,13 @@
 
   <div class="row">
     <button id="rollBtn" class="btn">Roll</button>
+    <select id="trialsSelect" class="select" title="Number of samples for Monte Carlo">
+      <option value="1000">1k</option>
+      <option value="10000" selected>10k</option>
+      <option value="50000">50k</option>
+      <option value="100000">100k</option>
+    </select>
+    <button id="probBtn" class="btn" title="Run Monte Carlo and show histogram">Probability distribution</button>
   </div>
 
   <div id="settings"></div>
@@ -69,6 +74,8 @@
     <h3>Result <span id="modeBadge" class="mode-label"></span></h3>
     <div id="attempts"></div>
     <div id="final"></div>
+    <canvas id="histCanvas" class="chart" hidden></canvas>
+    <div id="probStats" class="stats-note"></div>
   </section>
 
   <section class="card">
@@ -110,8 +117,22 @@ function highlightSelectedDice(){
   });
 }
 
-function randInt(max){return Math.floor(Math.random()*max)+1;}
-function basicRoll(faces,count){const rolls=[];for(let i=0;i<count;i++)rolls.push(randInt(faces));return rolls;}
+// Improved randomness using crypto API when available
+function randInt(max){
+  if(window.crypto && window.crypto.getRandomValues){
+    const array = new Uint32Array(1);
+    window.crypto.getRandomValues(array);
+    return (array[0] % max) + 1;
+  } else {
+    return Math.floor(Math.random()*max)+1;
+  }
+}
+
+function basicRoll(faces,count){
+  const rolls=[];
+  for(let i=0;i<count;i++) rolls.push(randInt(faces));
+  return rolls;
+}
 
 function colorizeRoll(value,faces){
   if(value===1) return `<span class="roll-low">${value}</span>`;
@@ -178,6 +199,9 @@ function renderCurrent(attempts,final){
 
   badge.textContent = a.mode==='adv' ? 'Advantage' : a.mode==='dis' ? 'Disadvantage' : '';
   finalDiv.textContent='Total: '+final;
+  // hide any previous chart by default (it will be shown when probBtn is used)
+  document.getElementById('histCanvas').hidden = true;
+  document.getElementById('probStats').textContent = '';
   updateSettings();
 }
 
@@ -229,23 +253,109 @@ function clearSavedHistory(){
   try{ localStorage.removeItem(STORAGE_KEY); }catch{}
 }
 
+// ---- Monte Carlo simulation & Histogram drawing ----
+function simulateDistribution(trials=10000){
+  const cnt = parseInt(document.getElementById('count').value);
+  const faces = state.faces;
+  const mod = parseInt(document.getElementById('modifier').value)||0;
+  const freq = new Map();
+
+  function rollOnce(){
+    if(cnt>0){
+      let total=0; for(let i=0;i<cnt;i++) total += randInt(faces);
+      return total + mod;
+    } else if(cnt===0){ // Advantage: roll 1 die twice, keep max
+      const a=randInt(faces), b=randInt(faces);
+      return Math.max(a,b) + mod;
+    } else { // Disadvantage: -1
+      const a=randInt(faces), b=randInt(faces);
+      return Math.min(a,b) + mod;
+    }
+  }
+
+  for(let t=0;t<trials;t++){
+    const v=rollOnce();
+    freq.set(v, (freq.get(v)||0)+1);
+  }
+  // Convert to sorted arrays
+  const keys=[...freq.keys()].sort((a,b)=>a-b);
+  const values=keys.map(k=>freq.get(k));
+  return {keys, values, trials};
+}
+
+function drawHistogram(keys, values){
+  const canvas=document.getElementById('histCanvas');
+  const dpr=window.devicePixelRatio||1;
+  const rect = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : {width:canvas.clientWidth};
+  const cssW = Math.max(280, (rect.width||canvas.clientWidth||320));
+  const cssH = canvas.clientHeight||240;
+  canvas.width = Math.floor(cssW*dpr);
+  canvas.height = Math.floor(cssH*dpr);
+  const ctx=canvas.getContext('2d');
+  ctx.scale(dpr,dpr);
+  // Clear
+  ctx.fillStyle='#0b1220'; ctx.fillRect(0,0,cssW,cssH);
+  // Padding
+  const padL=36, padR=10, padT=10, padB=26;
+  const W=cssW-padL-padR, H=cssH-padT-padB;
+  // Axes
+  ctx.strokeStyle='#334155'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT+H); ctx.lineTo(padL+W, padT+H); ctx.stroke();
+  // Bars
+  const maxVal=Math.max(...values);
+  const barW = Math.max(1, Math.floor(W/keys.length)-2);
+  for(let i=0;i<keys.length;i++){
+    const x = padL + i*(barW+2);
+    const h = maxVal>0 ? Math.round((values[i]/maxVal)*H) : 0;
+    const y = padT + (H - h);
+    ctx.fillStyle='#60a5fa';
+    ctx.fillRect(x, y, barW, h);
+  }
+  // X-axis ticks (sparse)
+  ctx.fillStyle='#94a3b8'; ctx.font='12px system-ui'; ctx.textAlign='center';
+  const step=Math.ceil(keys.length/10);
+  for(let i=0;i<keys.length;i+=step){
+    const x = padL + i*(barW+2) + barW/2;
+    ctx.fillText(String(keys[i]), x, padT+H+16);
+  }
+}
+
+function runProbability(){
+  // Show result card even if we haven't rolled yet
+  const card = document.getElementById('currentCard');
+  card.hidden = false;
+  // trials from dropdown
+  const sel = document.getElementById('trialsSelect');
+  const trials = sel ? parseInt(sel.value)||10000 : 10000;
+  const {keys, values} = simulateDistribution(trials);
+  const canvas=document.getElementById('histCanvas');
+  canvas.hidden=false;
+  // Draw after layout
+  requestAnimationFrame(()=>{
+    drawHistogram(keys, values);
+    const totalCount = values.reduce((a,b)=>a+b,0);
+    const mean = (keys.reduce((acc,k,i)=>acc + k*values[i],0)/totalCount).toFixed(2);
+    const min=keys[0], max=keys[keys.length-1];
+    const maxFreq=Math.max(...values);
+    const modes=keys.filter((k,i)=>values[i]===maxFreq);
+    document.getElementById('probStats').textContent = `Simulated ${trials.toLocaleString()} rolls → mean ${mean}, range ${min}–${max}, mode ${modes.join(', ')}`;
+  });
+}
+
 // UI wiring
 rollBtn.onclick=performRoll;
+probBtn.onclick=runProbability;
 clearHistory.onclick=()=>{ if(confirm('Clear history?')){ state.history=[]; clearSavedHistory(); renderHistory(); } };
+
 
 decrCount.onclick=()=>{
   const hidden=document.getElementById('count');
   let v=parseInt(hidden.value);
   if(isNaN(v)) v=1;
-  if(v>1){
-    v=v-1;
-  } else if(v===1){
-    v=0; // go to Advantage
-  } else if(v===0){
-    v=-1; // go to Disadvantage
-  } else {
-    v=-1; // clamp at Disadvantage
-  }
+  if(v>1){ v=v-1; }
+  else if(v===1){ v=0; }
+  else if(v===0){ v=-1; }
+  else { v=-1; }
   hidden.value=v; updateSettings();
 };
 
@@ -253,19 +363,24 @@ incrCount.onclick=()=>{
   const hidden=document.getElementById('count');
   let v=parseInt(hidden.value);
   if(isNaN(v)) v=1;
-  if(v===-1){
-    v=0; // from Disadvantage to Advantage
-  } else if(v===0){
-    v=1; // from Advantage to 1
-  } else if(v<20){
-    v=v+1;
-  }
+  if(v===-1){ v=0; }
+  else if(v===0){ v=1; }
+  else if(v<20){ v=v+1; }
   hidden.value=v; updateSettings();
 };
 
 // Modifier +/-
 decrMod.onclick=()=>{ const v=parseInt(document.getElementById('modifier').value)||0; document.getElementById('modifier').value = v-1; updateSettings(); };
 incrMod.onclick=()=>{ const v=parseInt(document.getElementById('modifier').value)||0; document.getElementById('modifier').value = v+1; updateSettings(); };
+
+// Storage
+function saveHistory(){
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state.history)); }catch{}
+}
+function loadHistory(){
+  try{ const raw=localStorage.getItem(STORAGE_KEY); if(raw){ const arr=JSON.parse(raw); if(Array.isArray(arr)) state.history=arr; } }catch{}
+}
+function clearSavedHistory(){ try{ localStorage.removeItem(STORAGE_KEY); }catch{} }
 
 // Init
 buildDiceButtons();
