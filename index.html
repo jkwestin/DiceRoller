@@ -33,6 +33,9 @@
     .chart { width:100%; height:240px; background:#0b1220; border:1px solid #334155; border-radius:6px; display:block; }
     .stats-note { font-size:12px; color:#94a3b8; margin-top:6px; }
 
+    /* Robust hide utility to avoid hidden/display conflicts */
+    .is-hidden { display:none !important; }
+
     @media (max-width:600px){
       .btn { font-size:14px; padding:8px 10px; }
       .count-display, .mod-display { min-width:120px; }
@@ -82,8 +85,9 @@
       <h3>Result <span id="modeBadge" class="mode-label"></span></h3>
       <div id="attempts"></div>
       <div id="final"></div>
-      <canvas id="histCanvas" class="chart" hidden></canvas>
-      <canvas id="cdfCanvas" class="chart" hidden></canvas>
+      <!-- Start hidden via class; we won't rely on the hidden attribute anymore -->
+      <canvas id="histCanvas" class="chart is-hidden"></canvas>
+      <canvas id="cdfCanvas" class="chart is-hidden"></canvas>
       <div id="probStats" class="stats-note"></div>
     </section>
 
@@ -110,7 +114,7 @@
 
     var state={faces:6,count:1,modifier:0,mode:'normal',history:[]};
 
-    // ====== UI Builders ======>
+    // ====== UI Builders ======
     var diceRow=document.getElementById('diceRow');
     function buildDiceButtons(){
       diceRow.innerHTML='';
@@ -157,6 +161,38 @@
       return '<span class="roll-mid">'+v+'</span>';
     }
 
+    // ====== Chart visibility helpers ======
+    function hideCharts(){
+      var hist=document.getElementById('histCanvas');
+      var cdf=document.getElementById('cdfCanvas');
+      var stats=document.getElementById('probStats');
+      if(hist){
+        hist.classList.add('is-hidden');
+        var hctx = hist.getContext && hist.getContext('2d');
+        if(hctx){ hctx.clearRect(0,0,hist.width||0,hist.height||0); }
+      }
+      if(cdf){
+        cdf.classList.add('is-hidden');
+        var cctx = cdf.getContext && cdf.getContext('2d');
+        if(cctx){ cctx.clearRect(0,0,cdf.width||0,cdf.height||0); }
+      }
+      if(stats) stats.textContent='';
+    }
+    function showCharts(){
+      var hist=document.getElementById('histCanvas');
+      var cdf=document.getElementById('cdfCanvas');
+      if(hist) hist.classList.remove('is-hidden');
+      if(cdf)  cdf.classList.remove('is-hidden');
+    }
+
+    // ====== Probability UI Reset ======
+    function resetProbabilityUI(){
+      probStepIdx=-1;
+      var btn=document.getElementById('probBtn');
+      if(btn) btn.textContent='Probability distribution';
+      hideCharts();
+    }
+
     // ====== Roll Logic ======
     function performRoll(){
       // Hide probability visuals and reset state on every roll
@@ -195,11 +231,7 @@
       finalDiv.textContent='Total: '+finalVal;
 
       // Extra safety: hide any lingering charts & stats when showing a new roll
-      var hist=document.getElementById('histCanvas');
-      var cdf=document.getElementById('cdfCanvas');
-      if(hist){ hist.hidden=true; hist.style.display='none'; }
-      if(cdf){ cdf.hidden=true; cdf.style.display='none'; }
-      document.getElementById('probStats').textContent='';
+      hideCharts();
 
       updateSettings();
     }
@@ -219,30 +251,6 @@
       var c=parseInt(document.getElementById('count').value,10);
       var d=document.getElementById('countDisplay');
       d.textContent=(c===0)?'Advantage':((c===-1)?'Disadvantage':String(c));
-    }
-    function resetProbabilityUI(){
-      probStepIdx=-1;
-
-      var btn=document.getElementById('probBtn');
-      if(btn) btn.textContent='Probability distribution';
-
-      var hist=document.getElementById('histCanvas');
-      var cdf=document.getElementById('cdfCanvas');
-      var stats=document.getElementById('probStats');
-
-      if(hist){
-        hist.hidden=true;
-        hist.style.display='none';
-        var hctx = hist.getContext && hist.getContext('2d');
-        if(hctx){ hctx.clearRect(0,0,hist.width||0,hist.height||0); }
-      }
-      if(cdf){
-        cdf.hidden=true;
-        cdf.style.display='none';
-        var cctx = cdf.getContext && cdf.getContext('2d');
-        if(cctx){ cctx.clearRect(0,0,cdf.width||0,cdf.height||0); }
-      }
-      if(stats) stats.textContent='';
     }
     function updateSettings(){
       var cnt=parseInt(document.getElementById('count').value,10);
@@ -371,13 +379,10 @@
 
       var res=simulateDistribution(trials);
 
-      var hist=document.getElementById('histCanvas');
-      var cdf=document.getElementById('cdfCanvas');
-
       // Ensure canvases are visible for drawing
-      if(hist){ hist.hidden=false; hist.style.display='block'; }
-      if(cdf){  cdf.hidden=false;  cdf.style.display='block'; }
+      showCharts();
 
+      // Draw on next frame to ensure layout has updated
       window.requestAnimationFrame(function(){
         drawHistogram(res.keys,res.values);
         drawCDF(res.keys,res.values);
