@@ -53,17 +53,17 @@
     <div class="row">
       <label>Mode:</label>
       <div id="modeRow">
-        <button data-mode="sum" class="btn selected">Sum</button>
+        <button data-mode="sum" class="btn">Sum</button>
         <button data-mode="kh" class="btn">Keep Highest</button>
         <button data-mode="kl" class="btn">Keep Lowest</button>
-        <button data-mode="succ" class="btn">Success Count</button>
+        <button data-mode="succ" class="btn selected">Success Count</button>
         <button data-mode="explode" class="btn">Exploding 6s</button>
         <button data-mode="reroll1" class="btn">Reroll 1s</button>
       </div>
     </div>
 
     <!-- Success threshold (only for Success Count) -->
-    <div class="row" id="succRow" hidden>
+    <div class="row" id="succRow">
       <label>Success on ≥</label>
       <div class="count-control">
         <button id="decrTN" class="btn mod">–</button>
@@ -122,7 +122,7 @@
     var PROB_STEPS=[1000,10000,50000,100000,200000,400000];
     var probStepIdx=-1; // -1 means not started
 
-    var state={faces:6,count:1,mode:'sum',history:[]};
+    var state={faces:6,count:1,mode:'succ',history:[]};
 
     // ====== RNG ======
     function randInt(max){
