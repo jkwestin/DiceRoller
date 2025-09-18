@@ -75,9 +75,8 @@
       </div>
     </div>
 
-    <!-- Count row (0=Adv, -1=Dis, else dice count 1..20) -->
     <div class="row">
-      <label>Number of dices (Disadv., Adv, 1,2,...,20):</label>
+      <label>Number of dices (1,2,...,40):</label>
       <div class="count-control">
         <button id="decrCount" class="btn">–</button>
         <div id="countDisplay" class="count-display" aria-live="polite">1</div>
@@ -121,7 +120,7 @@
     'use strict';
 
     // ====== Config & State (D6 only) ======
-    var STORAGE_KEY='rpg_dice_history_v2';
+    var STORAGE_KEY='d6_dice_history';
     var PROB_STEPS=[1000,10000,50000,100000,200000,400000];
     var probStepIdx=-1; // -1 means not started
 
@@ -271,8 +270,6 @@
       updateCountDisplay();
 
       var dicePart=(cnt>0?cnt:1)+'d6';
-      if(cnt===0) dicePart='Adv d6';
-      if(cnt===-1) dicePart='Dis d6';
       var modeTxt = ({sum:'Sum',kh:'Keep Highest',kl:'Keep Lowest',succ:'Successes',explode:'Exploding 6s',reroll1:'Reroll 1s'})[state.mode] || '';
       var tn = parseInt((document.getElementById('tn')||{value:5}).value,10);
       var succTxt = (state.mode==='succ') ? (' (TN ≥ '+tn+')') : '';
@@ -432,7 +429,7 @@
     document.getElementById('incrCount').onclick=function(){
       var hidden=document.getElementById('count');
       var v=parseInt(hidden.value,10); if(isNaN(v)) v=1;
-      if(v===-1) v=0; else if(v===0) v=1; else if(v<20) v++;
+      if(v===-1) v=0; else if(v===0) v=1; else if(v<40) v++;
       hidden.value=v; updateSettings();
     };
 
