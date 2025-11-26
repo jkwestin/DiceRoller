@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <title>Nordiska Väsen – Fysik-tärningar (Phaser + Matter)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- Phaser 3 (inkl. Matter via Phaser.Physics.Matter) -->
   <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js"></script>
   <style>
     :root {
@@ -104,12 +103,11 @@
 </div>
 
 <script>
-  // --- UI elements outside Phaser --------------------------------
+  // --- UI utanför Phaser -----------------------------------------
   const resultEl = document.getElementById("result");
   const rollBtn = document.getElementById("rollBtn");
   const diceCountInput = document.getElementById("diceCount");
 
-  // --- Phaser config ---------------------------------------------
   const WIDTH = 800;
   const HEIGHT = 450;
 
@@ -135,51 +133,175 @@
 
   const game = new Phaser.Game(config);
 
-  // --- Globals for the scene -------------------------------------
   let sceneRef;
   let diceGroup = [];
   let canRoll = true;
   let rollResolved = false;
 
-  function preload() {
+  function preload () {
     sceneRef = this;
+    // ingen asset-laddning behövs, vi ritar tärningar med Graphics/Text
+  }
 
-    // Enkel, generisk tärning: fyrkant med siffror – här skapar vi en
-    // spritesheet "on the fly" via graphics + renderTexture.
-    // Alternativ: ladda egna bilder via this.load.image().
-    const size = 64;
-    const rt = this.make.renderTexture({ width: size * 6, height: size, add: false });
+  function create () {
+    // Bakgrund
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0f1b29, 1);
+    bg.fillRect(0, 0, WIDTH, HEIGHT);
 
-    for (let i = 1; i <= 6; i++) {
-      const g = this.add.graphics();
-      g.fillStyle(0x111111, 1);
-      g.fillRoundedRect(0, 0, size - 4, size - 4, 8);
-      g.lineStyle(2, 0xffffff, 1);
-      g.strokeRoundedRect(0, 0, size - 4, size - 4, 8);
+    // “Skål”: botten + väggar (Matter-statisk)
+    const thickness = 40;
+    this.matter.add.rectangle(
+      WIDTH / 2,
+      HEIGHT - thickness / 2,
+      WIDTH * 0.8,
+      thickness,
+      { isStatic: true, chamfer: { radius: 10 } }
+    );
+    this.matter.add.rectangle(
+      WIDTH * 0.1,
+      HEIGHT * 0.6,
+      thickness,
+      HEIGHT * 0.5,
+      { isStatic: true }
+    );
+    this.matter.add.rectangle(
+      WIDTH * 0.9,
+      HEIGHT * 0.6,
+      thickness,
+      HEIGHT * 0.5,
+      { isStatic: true }
+    );
 
-      // Primitiv “pips” layout.
-      g.fillStyle(0xffffff, 1);
-      const cx = (size - 4) / 2;
-      const cy = (size - 4) / 2;
-      const off = 12;
+    // Lite synlig ram
+    const walls = this.add.graphics();
+    walls.lineStyle(2, 0x445566, 0.8);
+    walls.strokeRect(WIDTH * 0.1, HEIGHT * 0.35, WIDTH * 0.8, HEIGHT * 0.5);
 
-      function dot(x, y) {
-        g.fillCircle(x, y, 3.5);
+    this.matter.world.setBounds();
+
+    rollBtn.addEventListener("click", () => {
+      if (!canRoll) return;
+      startRoll();
+    });
+
+    resultEl.textContent = "Välj antal tärningar och klicka SLÅ!";
+  }
+
+  // Skapa en “tärnings-container” (ruta + text) + Matter-body
+  function createDie (x, y, value) {
+    const size = 40;
+
+    // ruta
+    const rect = sceneRef.add.rectangle(0, 0, size, size, 0xffffff);
+    rect.setStrokeStyle(2, 0x000000, 1);
+
+    // siffra
+    const label = sceneRef.add.text(0, 0, String(value), {
+      fontSize: "20px",
+      color: "#000000"
+    }).setOrigin(0.5, 0.5);
+
+    // container
+    const container = sceneRef.add.container(x, y, [rect, label]);
+
+    // matter-body kopplat till containern
+    sceneRef.matter.add.gameObject(container, {
+      shape: { type: "rectangle", width: size, height: size }
+    });
+
+    container.setBounce(0.4 + Math.random() * 0.3);
+    container.setFriction(0.1, 0.005, 0.001);
+    container.setFrictionAir(0.02);
+    container.setScale(1);
+
+    const forceX = (Math.random() - 0.5) * 0.01;
+    const forceY = 0.01 + Math.random() * 0.005;
+    container.applyForce({ x: forceX, y: forceY });
+    container.setAngularVelocity((Math.random() - 0.5) * 0.3);
+
+    // spara info
+    container.logicalValue = value;
+    container.rect = rect;
+    container.label = label;
+
+    return container;
+  }
+
+  function startRoll () {
+    const n = clamp(parseInt(diceCountInput.value, 10) || 1, 1, 20);
+    diceCountInput.value = n;
+    resultEl.textContent = "Tärningarna kastas...";
+    canRoll = false;
+    rollResolved = false;
+
+    // Ta bort gamla tärningar
+    diceGroup.forEach(d => d.destroy());
+    diceGroup = [];
+
+    for (let i = 0; i < n; i++) {
+      const x = WIDTH * 0.3 + Math.random() * WIDTH * 0.4;
+      const y = 40 + Math.random() * 40;
+      const value = Phaser.Math.Between(1, 6);
+      const die = createDie(x, y, value);
+      diceGroup.push(die);
+    }
+  }
+
+  function update () {
+    if (!diceGroup.length || rollResolved) return;
+
+    const velocityThreshold = 0.15;
+    let allResting = true;
+
+    for (const die of diceGroup) {
+      const body = die.body;
+      if (!body) continue;
+      const v = body.velocity;
+      const speed = Math.sqrt(v.x * v.x + v.y * v.y);
+      if (speed > velocityThreshold) {
+        allResting = false;
+        break;
       }
+    }
 
-      if (i === 1) {
-        dot(cx, cy);
-      } else if (i === 2) {
-        dot(cx - off, cy - off);
-        dot(cx + off, cy + off);
-      } else if (i === 3) {
-        dot(cx - off, cy - off);
-        dot(cx, cy);
-        dot(cx + off, cy + off);
-      } else if (i === 4) {
-        dot(cx - off, cy - off);
-        dot(cx + off, cy - off);
-        dot(cx - off, cy + off);
-        dot(cx + off, cy + off);
-      } else if (i === 5) {
-        dot(cx - off,
+    if (allResting) {
+      resolveRoll();
+    }
+  }
+
+  function resolveRoll () {
+    if (rollResolved) return;
+    rollResolved = true;
+    canRoll = true;
+
+    let successes = 0;
+    const values = [];
+
+    diceGroup.forEach(die => {
+      const value = die.logicalValue || 1;
+      values.push(value);
+      if (value === 6) successes++;
+
+      // färga 6:or gröna, andra lite grå
+      if (die.rect) {
+        if (value === 6) {
+          die.rect.setFillStyle(0x7bd67b, 1);
+        } else {
+          die.rect.setFillStyle(0xf0f0f0, 1);
+        }
+      }
+    });
+
+    resultEl.innerHTML =
+      `Du slog ${diceGroup.length} tärningar och fick ` +
+      `<strong>${successes}</strong> framgång(ar) (6:or).` +
+      `<br><span style="opacity:0.7;">[${values.join(", ")}]</span>`;
+  }
+
+  function clamp (v, min, max) {
+    return Math.max(min, Math.min(max, v));
+  }
+</script>
+</body>
+</html>
