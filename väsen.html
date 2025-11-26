@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <title>Nordiska Väsen Dice Roller</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark light;
+    }
+    body {
+      margin: 0;
+      padding: 1.5rem;
+      background: #111;
+      color: #eee;
+    }
+    h1, h2, h3 {
+      margin-top: 0;
+      text-align: center;
+    }
+    a {
+      color: #9fd3ff;
+    }
+    .app {
+      max-width: 760px;
+      margin: 0 auto;
+      background: #1a1a1a;
+      border-radius: 12px;
+      padding: 1.5rem;
+      box-shadow: 0 0 20px rgba(0,0,0,0.6);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    .card {
+      background: #222;
+      border-radius: 10px;
+      padding: 1rem;
+      border: 1px solid #333;
+    }
+    .label {
+      font-size: 0.9rem;
+      opacity: 0.85;
+      margin-bottom: 0.25rem;
+    }
+    .control-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .number-display {
+      min-width: 3rem;
+      text-align: center;
+      font-weight: bold;
+      font-size: 1.1rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 6px;
+      background: #111;
+      border: 1px solid #444;
+    }
+    button {
+      cursor: pointer;
+      border-radius: 6px;
+      border: 1px solid #555;
+      background: #333;
+      color: #eee;
+      padding: 0.25rem 0.7rem;
+      font-size: 1rem;
+      transition: background 0.1s ease, transform 0.05s ease;
+    }
+    button:hover {
+      background: #444;
+    }
+    button:active {
+      transform: translateY(1px);
+    }
+    .btn-main {
+      padding: 0.5rem 1rem;
+      font-weight: 600;
+    }
+    .btn-danger {
+      border-color: #b33;
+      background: #552020;
+    }
+    .btn-danger:hover {
+      background: #773030;
+    }
+    .btn-secondary {
+      border-style: dashed;
+    }
+    .buttons-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      justify-content: center;
+      margin-top: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .result-box {
+      min-height: 3rem;
+      padding: 0.75rem;
+      border-radius: 8px;
+      background: #111;
+      border: 1px solid #444;
+      font-size: 1rem;
+      white-space: pre-wrap;
+    }
+    .dice-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin-top: 0.5rem;
+    }
+    .die {
+      width: 2rem;
+      height: 2rem;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      border: 1px solid #555;
+      background: #181818;
+    }
+    .die.success {
+      border-color: #4caf50;
+      background: #15351a;
+      color: #b9ffbf;
+    }
+    .die.pushed {
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.15) inset;
+    }
+    .status-line {
+      margin-top: 0.5rem;
+      font-weight: 600;
+    }
+    .status-success {
+      color: #7adf7a;
+    }
+    .status-fail {
+      color: #ff8080;
+    }
+    .small {
+      font-size: 0.85rem;
+      opacity: 0.9;
+    }
+    .history {
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 0.9rem;
+    }
+    .history-entry {
+      margin-bottom: 0.35rem;
+      border-bottom: 1px solid #333;
+      padding-bottom: 0.35rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    th, td {
+      border-bottom: 1px solid #333;
+      padding: 0.25rem 0.35rem;
+      text-align: right;
+    }
+    th:first-child, td:first-child {
+      text-align: left;
+    }
+    .muted {
+      opacity: 0.7;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.05rem 0.4rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      border: 1px solid #555;
+      margin-left: 0.25rem;
+    }
+    .badge-push {
+      border-color: #f1c40f;
+      color: #f1c40f;
+    }
+    .badge-difficulty {
+      border-color: #9b59b6;
+      color: #dcb3ff;
+    }
+    @media (max-width: 480px) {
+      body {
+        padding: 0.75rem;
+      }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <h1>Nordiska Väsen – Dice Roller</h1>
+  <p class="small" style="text-align:center; margin-bottom:1rem;">
+    Vaesen / Nordiska Väsen använder en tärningspool av d6. Varje <strong>6:a är en framgång</strong>.
+    Välj hur många tärningar du slår, hur många framgångar som krävs och tryck på <strong>Slå</strong>.
+    Du kan sedan <strong>Pressa</strong> slaget (slår om alla tärningar som inte visar 6) – kom ihåg
+    att ta en <em>tillstånd</em> enligt reglerna i boken.
+  </p>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">Antal tärningar (attribut + färdighet + bonus)</div>
+      <div class="control-row">
+        <button id="diceMinus">–</button>
+        <div class="number-display" id="diceCount">5</div>
+        <button id="dicePlus">+</button>
+      </div>
+      <p class="small muted">
+        De flesta rollpersoner ligger ofta runt 4–8 tärningar för vanliga slag.
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="label">Krav på framgångar (svårighetsgrad)</div>
+      <div class="control-row">
+        <button id="diffMinus">–</button>
+        <div class="number-display" id="difficulty">1</div>
+        <button id="diffPlus">+</button>
+      </div>
+      <p class="small muted">
+        <strong>1</strong> = normalt slag, <strong>2</strong> = utmanande,
+        <strong>3+</strong> = mycket svårt.
+      </p>
+    </div>
+  </div>
+
+  <div class="buttons-row">
+    <button class="btn-main" id="rollBtn">Slå</button>
+    <button class="btn-main btn-secondary" id="pushBtn">Pressa senaste slag</button>
+    <button class="btn-main" id="probBtn">Visa sannolikheter</button>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Resultat</h2>
+      <div id="resultBox" class="result-box small muted">
+        Inget slag ännu.
+      </div>
+      <div id="diceContainer" class="dice-list"></div>
+      <div id="statusLine" class="status-line"></div>
+      <p class="small muted">
+        <strong>Obs:</strong> När du pressar ska du enligt Nordiska Väsen-reglerna
+        lägga till ett tillstånd (fysiskt eller mentalt) om slaget misslyckas.
+        Denna app räknar bara tärningarna åt dig.
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>Historik</h2>
+      <div id="history" class="history small muted">
+        Inga tidigare slag.
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Sannolikhetsfördelning</h2>
+    <p class="small muted">
+      Tabellen visar sannolikheten att få exakt <em>k</em> framgångar (6:or) med
+      nuvarande antal tärningar, samt den kumulativa chansen att få
+      <strong>minst</strong> så många framgångar. Baserat på en vanlig
+      <strong>Year Zero</strong>-tärningspool (6 = framgång).
+    </p>
+    <div id="probSummary" class="small"></div>
+    <div id="probTableContainer"></div>
+  </div>
+
+  <p class="small muted" style="text-align:center; margin-top:1.5rem;">
+    Gjord för personligt bruk med <span style="color:#e25555;">♥</span> till
+    <em>Nordiska Väsen</em> (Fria Ligan).
+  </p>
+</div>
+
+<script>
+  // --- State ------------------------------------------------------
+  const state = {
+    diceCount: 5,
+    difficulty: 1,
+    lastRoll: null // { rolls: [int], successes: int, pushed: bool, diceCount: int }
+  };
+
+  // --- Helpers ----------------------------------------------------
+  function clamp(val, min, max) {
+    return Math.max(min, Math.min(max, val));
+  }
+
+  function randomD6() {
+    return Math.floor(Math.random() * 6) + 1;
+  }
+
+  function countSuccesses(rolls) {
+    return rolls.filter(v => v === 6).length;
+  }
+
+  // Binomial probability P(X = k) for n dice, p = 1/6
+  function factorial(n) {
+    let res = 1;
+    for (let i = 2; i <= n; i++) res *= i;
+    return res;
+  }
+
+  function binomCoeff(n, k) {
+    if (k < 0 || k > n) return 0;
+    // more stable multiplicative version
+    let res = 1;
+    for (let i = 1; i <= k; i++) {
+      res *= (n - (k - i));
+      res /= i;
+    }
+    return res;
+  }
+
+  function binomProb(n, k, p) {
+    const q = 1 - p;
+    return binomCoeff(n, k) * Math.pow(p, k) * Math.pow(q, n - k);
+  }
+
+  function formatPercent(x) {
+    return (x * 100).toFixed(1) + " %";
+  }
+
+  // --- UI update --------------------------------------------------
+  const diceCountEl = document.getElementById("diceCount");
+  const difficultyEl = document.getElementById("difficulty");
+  const resultBoxEl = document.getElementById("resultBox");
+  const diceContainerEl = document.getElementById("diceContainer");
+  const statusLineEl = document.getElementById("statusLine");
+  const historyEl = document.getElementById("history");
+  const probTableContainerEl = document.getElementById("probTableContainer");
+  const probSummaryEl = document.getElementById("probSummary");
+
+  function refreshControls() {
+    diceCountEl.textContent = state.diceCount;
+    difficultyEl.textContent = state.difficulty;
+  }
+
+  function updateResultDisplay(rollData) {
+    if (!rollData) {
+      resultBoxEl.textContent = "Inget slag ännu.";
+      resultBoxEl.classList.add("muted");
+      diceContainerEl.innerHTML = "";
+      statusLineEl.textContent = "";
+      return;
+    }
+
+    resultBoxEl.classList.remove("muted");
+
+    const { rolls, successes, pushed, diceCount } = rollData;
+    const needed = state.difficulty;
+    const label = pushed ? "Pressat slag" : "Slag";
+
+    resultBoxEl.textContent =
+      `${label} med ${diceCount} tärningar.\n` +
+      `Antal framgångar (6:or): ${successes}\n` +
+      `Krav: ${needed} framgång(ar).`;
+
+    // Dice visual list
+    diceContainerEl.innerHTML = "";
+    rolls.forEach((val, idx) => {
+      const dieDiv = document.createElement("div");
+      dieDiv.className = "die";
+      if (val === 6) dieDiv.classList.add("success");
+      if (pushed) dieDiv.classList.add("pushed");
+      dieDiv.textContent = val;
+      diceContainerEl.appendChild(dieDiv);
+    });
+
+    // Status line
+    if (successes >= needed) {
+      statusLineEl.className = "status-line status-success";
+      statusLineEl.innerHTML =
+        `✅ <strong>FRAMGÅNG!</strong> Du uppnår kravet (${successes} ≥ ${needed}).` +
+        (pushed ? ' <span class="badge badge-push">Pressat</span>' : '');
+    } else {
+      statusLineEl.className = "status-line status-fail";
+      statusLineEl.innerHTML =
+        `❌ <strong>Misslyckande.</strong> Du fick ${successes} framgång(ar), behöver ${needed}.` +
+        (pushed ? ' <span class="badge badge-push">Pressat</span>' : '');
+    }
+  }
+
+  function addToHistory(rollData) {
+    if (!rollData) return;
+    const { rolls, successes, pushed, diceCount } = rollData;
+    const needed = state.difficulty;
+    const entry = document.createElement("div");
+    entry.className = "history-entry";
+
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString();
+
+    const successText = successes >= needed ? "FRAMGÅNG" : "Misslyckande";
+    const pushedText = pushed ? " (pressat)" : "";
+
+    entry.innerHTML =
+      `<div><strong>${timeStr}</strong> – ${successText}${pushedText}</div>` +
+      `<div class="small">Tärningar: ${diceCount}, 6:or: ${successes}, krav: ${needed}</div>` +
+      `<div class="small muted">[${rolls.join(", ")}]</div>`;
+
+    if (historyEl.textContent.trim() === "Inga tidigare slag.") {
+      historyEl.textContent = "";
+    }
+    historyEl.prepend(entry);
+  }
+
+  function updateProbabilityTable() {
+    const n = state.diceCount;
+    const needed = state.difficulty;
+    probTableContainerEl.innerHTML = "";
+    probSummaryEl.textContent = "";
+
+    if (n <= 0) return;
+
+    const p = 1 / 6;
+    let rowsHtml = "";
+    let cumulativeAtLeastNeeded = 0;
+
+    for (let k = 0; k <= n; k++) {
+      const pk = binomProb(n, k, p);
+      if (k >= needed) cumulativeAtLeastNeeded += pk;
+      rowsHtml += `
+        <tr>
+          <td>${k}</td>
+          <td>${formatPercent(pk)}</td>
+          <td>${formatPercent(1 - cumulativeAtLeastNeeded + pk)}</td>
+          <td>${formatPercent(cumulativeAtLeastNeeded)}</td>
+        </tr>`;
+    }
+
+    const tableHtml = `
+      <table>
+        <thead>
+          <tr>
+            <th>k (framgångar)</th>
+            <th>P(X = k)</th>
+            <th>P(X ≤ k)</th>
+            <th>P(X ≥ k)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    `;
+    probTableContainerEl.innerHTML = tableHtml;
+
+    probSummaryEl.innerHTML =
+      `<strong>Antal tärningar:</strong> ${n} · ` +
+      `<strong>Krav:</strong> ${needed} ` +
+      `<span class="badge badge-difficulty">svårighetsgrad</span><br>` +
+      `Chans att få minst ${needed} framgång(ar): ` +
+      `<strong>${formatPercent(cumulativeAtLeastNeeded)}</strong>`;
+  }
+
+  // --- Actions ----------------------------------------------------
+  function doRoll(isPush) {
+    let rolls = [];
+    let diceCount = state.diceCount;
+
+    if (isPush) {
+      if (!state.lastRoll) {
+        alert("Du måste slå ett slag innan du kan pressa det.");
+        return;
+      }
+      if (state.lastRoll.pushed) {
+        alert("Du kan bara pressa ett slag en gång enligt reglerna.");
+        return;
+      }
+      diceCount = state.lastRoll.diceCount;
+      // Re-roll all non-6 dice, keep existing 6s
+      rolls = state.lastRoll.rolls.map(v => (v === 6 ? 6 : randomD6()));
+    } else {
+      if (diceCount <= 0) {
+        alert("Antal tärningar måste vara minst 1.");
+        return;
+      }
+      for (let i = 0; i < diceCount; i++) {
+        rolls.push(randomD6());
+      }
+    }
+
+    const successes = countSuccesses(rolls);
+    const rollData = {
+      rolls,
+      successes,
+      pushed: !!isPush,
+      diceCount
+    };
+
+    state.lastRoll = rollData;
+    updateResultDisplay(rollData);
+    addToHistory(rollData);
+  }
+
+  // --- Event listeners --------------------------------------------
+  document.getElementById("diceMinus").addEventListener("click", () => {
+    state.diceCount = clamp(state.diceCount - 1, 1, 40);
+    refreshControls();
+  });
+
+  document.getElementById("dicePlus").addEventListener("click", () => {
+    state.diceCount = clamp(state.diceCount + 1, 1, 40);
+    refreshControls();
+  });
+
+  document.getElementById("diffMinus").addEventListener("click", () => {
+    state.difficulty = clamp(state.difficulty - 1, 1, 10);
+    refreshControls();
+  });
+
+  document.getElementById("diffPlus").addEventListener("click", () => {
+    state.difficulty = clamp(state.difficulty + 1, 1, 10);
+    refreshControls();
+  });
+
+  document.getElementById("rollBtn").addEventListener("click", () => {
+    doRoll(false);
+  });
+
+  document.getElementById("pushBtn").addEventListener("click", () => {
+    doRoll(true);
+  });
+
+  document.getElementById("probBtn").addEventListener("click", () => {
+    updateProbabilityTable();
+  });
+
+  // --- Init -------------------------------------------------------
+  refreshControls();
+  updateResultDisplay(null);
+  updateProbabilityTable();
+</script>
+</body>
+      </html>
