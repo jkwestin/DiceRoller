@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Råttfällan (Physics) – JS</title>
+  <style>
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#f3f3f3; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .hud {
+      display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:space-between;
+      background:#fff; border-radius:14px; padding:12px 14px; box-shadow: 0 6px 18px rgba(0,0,0,.08);
+      margin-bottom: 12px;
+    }
+    .left, .right { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .pill { background:#f0f0f0; padding:6px 10px; border-radius:999px; font-size:14px; }
+    button { border:0; background:#111; color:#fff; padding:10px 12px; border-radius:12px; cursor:pointer; }
+    button:active { transform: translateY(1px); }
+    canvas { width:100%; height:auto; display:block; border-radius:18px; background: linear-gradient(#ffffff,#f7f7f7); box-shadow: 0 10px 28px rgba(0,0,0,.12); touch-action:none; }
+    .help { margin-top:10px; background:#fff; border-radius:14px; padding:12px 14px; box-shadow: 0 6px 18px rgba(0,0,0,.08); font-size:14px; line-height:1.35; }
+    kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; background:#eee; border-radius:6px; padding:2px 6px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud">
+    <div class="left">
+      <div class="pill"><b>Player:</b> <span id="player">1</span></div>
+      <div class="pill"><b>Turn picks:</b> <span id="pickedThisTurn">0</span>/1</div>
+      <div class="pill"><b>P1:</b> <span id="p1">0</span></div>
+      <div class="pill"><b>P2:</b> <span id="p2">0</span></div>
+      <div class="pill"><b>Trap:</b> <span id="trapState">ARMED</span></div>
+    </div>
+    <div class="right">
+      <button id="trigger">Trigger trap (Space)</button>
+      <button id="reset">Reset</button>
+    </div>
+  </div>
+
+  <canvas id="c" width="1100" height="600"></canvas>
+
+  <div class="help">
+    <b>Rules (digital version):</b><br>
+    • Two players alternate turns. On your turn you may pick up <b>one</b> puck by clicking it (only if it’s nearly resting).<br>
+    • If you <b>trigger the trap</b> (gate moves) during your turn, your turn ends immediately: next player.<br>
+    • Press <kbd>Space</kbd> (or button) to release the spring gate. The slam pushes pucks across the divider to the right side.<br>
+    • Goal: just collect most pucks (simple scoring).<br><br>
+    Tip: Let the pucks settle before picking, or you might “cause movement” and lose your turn.
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+
+  const elPlayer = document.getElementById("player");
+  const elPickedThisTurn = document.getElementById("pickedThisTurn");
+  const elP1 = document.getElementById("p1");
+  const elP2 = document.getElementById("p2");
+  const elTrapState = document.getElementById("trapState");
+  const btnTrigger = document.getElementById("trigger");
+  const btnReset = document.getElementById("reset");
+
+  // --- World layout ---
+  const W = canvas.width, H = canvas.height;
+
+  // Board rectangle
+  const board = { x: 80, y: 70, w: 940, h: 460, r: 18 };
+
+  // Divider between left/right compartments (like the middle bar)
+  const divider = { x: board.x + board.w * 0.52, y: board.y + 20, w: 10, h: board.h - 40 };
+
+  // Trap bay on left: gate moves horizontally across left compartment
+  const trap = {
+    // gate slides from openX (retracted) to closedX (slammed inward)
+    openX: board.x + 120,
+    closedX: divider.x - 34,
+    y: board.y + 100,
+    h: 220,
+    w: 22,
+    x: 0,         // current gate x
+    v: 0,         // gate velocity
+    armed: true,  // ready to trigger?
+    triggered: false,
+    moving: false,
+  };
+
+  // Physics settings
+  const PHYS = {
+    dtMax: 1/45,
+    gravity: 0,          // top-down game: no gravity
+    linearDamp: 1.8,     // friction-like damping
+    wallBounce: 0.55,
+    puckBounce: 0.88,
+    iterations: 2,       // solver iterations
+  };
+
+  // Pucks
+  const COLORS = ["#d93a3a", "#2f6fd6", "#f4d21f"];
+  const pucks = [];
+  const PUCK_N = 38;
+
+  // Game/turn state
+  let currentPlayer = 1;
+  let pickedThisTurn = 0;
+  let score = { 1: 0, 2: 0 };
+  let lastT = performance.now();
+  let pointer = { x: 0, y: 0, down: false };
+
+  // If trap moves during a player's turn, their turn immediately ends.
+  let trapMovedThisTurn = false;
+
+  function resetAll() {
+    // reset trap
+    trap.x = trap.openX;
+    trap.v = 0;
+    trap.armed = true;
+    trap.triggered = false;
+    trap.moving = false;
+
+    // reset pucks
+    pucks.length = 0;
+    const leftArea = {
+      x1: board.x + 40,
+      y1: board.y + 40,
+      x2: divider.x - 60,
+      y2: board.y + board.h - 40,
+    };
+
+    const r = 14;
+    for (let i = 0; i < PUCK_N; i++) {
+      let x, y, tries = 0;
+      do {
+        x = leftArea.x1 + r + Math.random() * (leftArea.x2 - leftArea.x1 - 2*r);
+        y = leftArea.y1 + r + Math.random() * (leftArea.y2 - leftArea.y1 - 2*r);
+        tries++;
+      } while (tries < 120 && pucks.some(p => dist2(p.x,p.y,x,y) < (p.r + r + 2)**2));
+
+      pucks.push({
+        x, y, r,
+        vx: (Math.random()-0.5)*40,
+        vy: (Math.random()-0.5)*40,
+        color: COLORS[i % COLORS.length],
+        alive: true
+      });
+    }
+
+    // reset turns/scores
+    currentPlayer = 1;
+    pickedThisTurn = 0;
+    score = { 1: 0, 2: 0 };
+    trapMovedThisTurn = false;
+
+    syncHUD();
+  }
+
+  function syncHUD() {
+    elPlayer.textContent = String(currentPlayer);
+    elPickedThisTurn.textContent = String(pickedThisTurn);
+    elP1.textContent = String(score[1]);
+    elP2.textContent = String(score[2]);
+
+    let st = "ARMED";
+    if (!trap.armed && !trap.moving) st = "COOLDOWN";
+    if (trap.moving) st = "MOVING";
+    elTrapState.textContent = st;
+  }
+
+  // --- Input ---
+  function canvasToWorld(e) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left) * (canvas.width / rect.width),
+      y: (e.clientY - rect.top) * (canvas.height / rect.height),
+    };
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    pointer.down = true;
+    const p = canvasToWorld(e);
+    pointer.x = p.x; pointer.y = p.y;
+    canvas.setPointerCapture(e.pointerId);
+    attemptPick(p.x, p.y);
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    const p = canvasToWorld(e);
+    pointer.x = p.x; pointer.y = p.y;
+  });
+
+  canvas.addEventListener("pointerup", () => {
+    pointer.down = false;
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space") {
+      e.preventDefault();
+      triggerTrap();
+    }
+  });
+
+  btnTrigger.addEventListener("click", triggerTrap);
+  btnReset.addEventListener("click", resetAll);
+
+  function nextPlayerTurn(reason) {
+    // reason is just for debugging if you want
+    currentPlayer = (currentPlayer === 1) ? 2 : 1;
+    pickedThisTurn = 0;
+    trapMovedThisTurn = false;
+    syncHUD();
+  }
+
+  function attemptPick(x, y) {
+    if (pickedThisTurn >= 1) return;
+
+    // If trap moved already this turn, you're done
+    if (trapMovedThisTurn) return;
+
+    // Find a puck under cursor that is "resting"
+    let best = null;
+    let bestD2 = Infinity;
+
+    for (const p of pucks) {
+      if (!p.alive) continue;
+      const d2 = dist2(x, y, p.x, p.y);
+      if (d2 <= (p.r + 6)**2 && d2 < bestD2) {
+        best = p; bestD2 = d2;
+      }
+    }
+    if (!best) return;
+
+    // Must be almost not moving to pick up (prevents “cheesy picks”)
+    const speed = Math.hypot(best.vx, best.vy);
+    if (speed > 18) return;
+
+    // Pick it up
+    best.alive = false;
+    pickedThisTurn++;
+    score[currentPlayer]++;
+
+    syncHUD();
+
+    // End of turn after one pick (matches your rule)
+    nextPlayerTurn("picked");
+  }
+
+  // --- Trap behavior ---
+  function triggerTrap() {
+    if (!trap.armed || trap.moving) return;
+
+    trap.armed = false;
+    trap.triggered = true;
+    trap.moving = true;
+
+    // This counts as “trap moved” for whoever's turn it is
+    trapMovedThisTurn = true;
+    // Immediately pass turn
+    nextPlayerTurn("trap");
+  }
+
+  function updateTrap(dt) {
+    // Gate spring slam:
+    // When triggered, accelerate toward closedX, then return to openX slowly (re-arm)
+    const slamK = 2200;     // spring strength
+    const returnK = 450;    // return strength
+    const damping = 22;
+
+    if (trap.moving) {
+      // Determine target: if triggered -> slam closed, else return open
+      let target = trap.triggered ? trap.closedX : trap.openX;
+
+      const dx = target - trap.x;
+      const a = (trap.triggered ? slamK : returnK) * dx - damping * trap.v;
+
+      trap.v += a * dt;
+      trap.x += trap.v * dt;
+
+      // Stop conditions / phase transitions
+      if (trap.triggered && Math.abs(trap.x - trap.closedX) < 1.2 && Math.abs(trap.v) < 30) {
+        // reached slammed position, start returning
+        trap.x = trap.closedX;
+        trap.v *= 0.2;
+        trap.triggered = false;
+      }
+
+      if (!trap.triggered && Math.abs(trap.x - trap.openX) < 1.2 && Math.abs(trap.v) < 25) {
+        // returned to open, re-arm
+        trap.x = trap.openX;
+        trap.v = 0;
+        trap.moving = false;
+        trap.armed = true;
+      }
+    } else {
+      trap.v = 0;
+    }
+  }
+
+  // --- Physics ---
+  function update(dt) {
+    // clamp dt
+    dt = Math.min(dt, PHYS.dtMax);
+
+    updateTrap(dt);
+
+    // Integrate pucks
+    for (const p of pucks) {
+      if (!p.alive) continue;
+      p.vx *= Math.exp(-PHYS.linearDamp * dt);
+      p.vy *= Math.exp(-PHYS.linearDamp * dt);
+
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+    }
+
+    // Solve collisions multiple iterations
+    for (let it = 0; it < PHYS.iterations; it++) {
+      // puck-puck
+      for (let i = 0; i < pucks.length; i++) {
+        const a = pucks[i]; if (!a.alive) continue;
+        for (let j = i+1; j < pucks.length; j++) {
+          const b = pucks[j]; if (!b.alive) continue;
+          collideCircles(a, b);
+        }
+      }
+
+      // puck-walls & divider
+      for (const p of pucks) {
+        if (!p.alive) continue;
+        collideWithBoard(p);
+        collideWithDivider(p);
+        collideWithGate(p);
+      }
+    }
+
+    // HUD state (cheap update)
+    syncHUD();
+  }
+
+  function collideCircles(a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d2 = dx*dx + dy*dy;
+    const minD = a.r + b.r;
+    if (d2 <= 1e-9 || d2 >= minD*minD) return;
+
+    const d = Math.sqrt(d2);
+    const nx = dx / d, ny = dy / d;
+    const overlap = minD - d;
+
+    // positional correction
+    const push = overlap * 0.5;
+    a.x -= nx * push; a.y -= ny * push;
+    b.x += nx * push; b.y += ny * push;
+
+    // velocity response
+    const rvx = b.vx - a.vx;
+    const rvy = b.vy - a.vy;
+    const vn = rvx*nx + rvy*ny;
+    if (vn > 0) return;
+
+    const e = PHYS.puckBounce;
+    const j = -(1 + e) * vn / 2; // equal masses
+    const ix = j * nx, iy = j * ny;
+
+    a.vx -= ix; a.vy -= iy;
+    b.vx += ix; b.vy += iy;
+  }
+
+  function collideWithBoard(p) {
+    const left = board.x + 18 + p.r;
+    const right = board.x + board.w - 18 - p.r;
+    const top = board.y + 18 + p.r;
+    const bottom = board.y + board.h - 18 - p.r;
+
+    if (p.x < left) { p.x = left; p.vx = Math.abs(p.vx) * PHYS.wallBounce; }
+    if (p.x > right){ p.x = right; p.vx = -Math.abs(p.vx) * PHYS.wallBounce; }
+    if (p.y < top)  { p.y = top; p.vy = Math.abs(p.vy) * PHYS.wallBounce; }
+    if (p.y > bottom){ p.y = bottom; p.vy = -Math.abs(p.vy) * PHYS.wallBounce; }
+  }
+
+  function collideWithDivider(p) {
+    // Solid divider bar
+    const x1 = divider.x - p.r;
+    const x2 = divider.x + divider.w + p.r;
+    const y1 = divider.y - p.r;
+    const y2 = divider.y + divider.h + p.r;
+
+    // If inside expanded rectangle, push out by nearest side
+    if (p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2) {
+      const dl = Math.abs(p.x - x1);
+      const dr = Math.abs(x2 - p.x);
+      const dt = Math.abs(p.y - y1);
+      const db = Math.abs(y2 - p.y);
+      const m = Math.min(dl, dr, dt, db);
+
+      if (m === dl) { p.x = x1; p.vx = -Math.abs(p.vx) * PHYS.wallBounce; }
+      else if (m === dr) { p.x = x2; p.vx = Math.abs(p.vx) * PHYS.wallBounce; }
+      else if (m === dt) { p.y = y1; p.vy = -Math.abs(p.vy) * PHYS.wallBounce; }
+      else { p.y = y2; p.vy = Math.abs(p.vy) * PHYS.wallBounce; }
+    }
+  }
+
+  function collideWithGate(p) {
+    // Gate is a vertical rectangle that moves in x
+    const gx1 = trap.x - trap.w/2 - p.r;
+    const gx2 = trap.x + trap.w/2 + p.r;
+    const gy1 = trap.y - p.r;
+    const gy2 = trap.y + trap.h + p.r;
+
+    if (p.x >= gx1 && p.x <= gx2 && p.y >= gy1 && p.y <= gy2) {
+      // push out horizontally mostly, since gate is vertical
+      const dl = Math.abs(p.x - gx1);
+      const dr = Math.abs(gx2 - p.x);
+      const dt = Math.abs(p.y - gy1);
+      const db = Math.abs(gy2 - p.y);
+
+      // prefer left/right resolution
+      const m = Math.min(dl, dr, dt, db);
+      if (m === dl) {
+        p.x = gx1;
+        // add impulse from moving gate
+        p.vx = -Math.abs(p.vx) + trap.v * 0.6;
+      } else if (m === dr) {
+        p.x = gx2;
+        p.vx = Math.abs(p.vx) + trap.v * 0.6;
+      } else if (m === dt) {
+        p.y = gy1; p.vy = -Math.abs(p.vy) * PHYS.wallBounce;
+      } else {
+        p.y = gy2; p.vy = Math.abs(p.vy) * PHYS.wallBounce;
+      }
+
+      // The slam should strongly “push” pucks to the right when moving inward
+      if (trap.moving) {
+        p.vx += trap.v * 0.8;
+      }
+    }
+  }
+
+  // --- Rendering ---
+  function draw() {
+    ctx.clearRect(0,0,W,H);
+
+    // board
+    roundRect(ctx, board.x, board.y, board.w, board.h, board.r);
+    ctx.fillStyle = "#d6b07a"; ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,.18)"; ctx.lineWidth = 4; ctx.stroke();
+
+    // inner
+    roundRect(ctx, board.x+16, board.y+16, board.w-32, board.h-32, 14);
+    ctx.fillStyle = "#fbfbfb"; ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,.10)"; ctx.lineWidth = 2; ctx.stroke();
+
+    // left/right labels
+    ctx.fillStyle = "rgba(0,0,0,.55)";
+    ctx.font = "600 14px system-ui, sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("TRAP BAY", board.x+28, board.y+38);
+    ctx.textAlign = "right";
+    ctx.fillText("SAFE SIDE", board.x+board.w-28, board.y+38);
+
+    // divider
+    ctx.fillStyle = "#c9c9c9";
+    ctx.fillRect(divider.x, divider.y, divider.w, divider.h);
+
+    // gate track
+    ctx.strokeStyle = "rgba(0,0,0,.18)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(trap.openX, trap.y - 8);
+    ctx.lineTo(trap.closedX, trap.y - 8);
+    ctx.stroke();
+
+    // gate (spring plate)
+    ctx.fillStyle = trap.moving ? "#444" : "#333";
+    ctx.fillRect(trap.x - trap.w/2, trap.y, trap.w, trap.h);
+    // gate highlight
+    ctx.fillStyle = "rgba(255,255,255,.15)";
+    ctx.fillRect(trap.x - trap.w/2 + 3, trap.y + 6, 4, trap.h - 12);
+
+    // spring indicator
+    ctx.strokeStyle = "rgba(0,0,0,.45)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    const sx = trap.openX - 38, sy = trap.y + trap.h/2;
+    for (let i = 0; i < 8; i++) {
+      const t = i/7;
+      const x = sx - t*40;
+      const y = sy + Math.sin(t*Math.PI*7) * 10;
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+
+    // pucks
+    for (const p of pucks) {
+      if (!p.alive) continue;
+      // shadow
+      ctx.beginPath();
+      ctx.arc(p.x+2, p.y+3, p.r, 0, Math.PI*2);
+      ctx.fillStyle = "rgba(0,0,0,.14)";
+      ctx.fill();
+      // body
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+      // highlight
+      ctx.beginPath();
+      ctx.arc(p.x-4, p.y-4, p.r*0.55, 0, Math.PI*2);
+      ctx.fillStyle = "rgba(255,255,255,.30)";
+      ctx.fill();
+    }
+
+    // turn hint
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(0,0,0,.65)";
+    ctx.font = "600 16px system-ui, sans-serif";
+    const hint = trapMovedThisTurn
+      ? "Trap moved → turn already passed"
+      : (pickedThisTurn === 0 ? "Pick 1 puck (click) or trigger trap (Space)" : "Turn done");
+    ctx.fillText(hint, W/2, board.y + board.h + 45);
+  }
+
+  function roundRect(ctx,x,y,w,h,r){
+    const rr = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x+rr,y);
+    ctx.arcTo(x+w,y,x+w,y+h,rr);
+    ctx.arcTo(x+w,y+h,x,y+h,rr);
+    ctx.arcTo(x,y+h,x,y,rr);
+    ctx.arcTo(x,y,x+w,y,rr);
+    ctx.closePath();
+  }
+
+  function dist2(ax,ay,bx,by){ const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy; }
+
+  // --- Loop ---
+  function loop(now) {
+    const dt = Math.min(0.033, (now - lastT) / 1000);
+    lastT = now;
+
+    update(dt);
+    draw();
+
+    requestAnimationFrame(loop);
+  }
+
+  resetAll();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
