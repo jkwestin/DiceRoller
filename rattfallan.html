@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Råttfällan – JS Game</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#f4f4f4; }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 16px; }
+    .hud {
+      display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between;
+      background:white; border-radius:14px; padding:12px 14px; box-shadow: 0 6px 18px rgba(0,0,0,.08);
+      margin-bottom: 12px;
+    }
+    .hud .left, .hud .right { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+    .pill { padding:6px 10px; border-radius:999px; background:#f0f0f0; font-size:14px; }
+    button {
+      border:0; background:#111; color:white; padding:10px 12px; border-radius:12px; cursor:pointer;
+      box-shadow: 0 6px 14px rgba(0,0,0,.18);
+    }
+    button:active { transform: translateY(1px); }
+    canvas {
+      width: 100%; height: auto; display:block;
+      background: linear-gradient(#ffffff, #f8f8f8);
+      border-radius: 18px;
+      box-shadow: 0 10px 28px rgba(0,0,0,.12);
+      touch-action: none;
+    }
+    .help {
+      margin-top: 10px;
+      color:#333;
+      font-size: 14px;
+      background: #fff;
+      border-radius: 14px;
+      padding: 12px 14px;
+      box-shadow: 0 6px 18px rgba(0,0,0,.08);
+      line-height: 1.35;
+    }
+    kbd {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      background:#eee; border-radius:6px; padding:2px 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hud">
+      <div class="left">
+        <div class="pill"><b>Mål:</b> Plocka <span id="targetColorName">GUL</span></div>
+        <div class="pill"><b>Poäng:</b> <span id="score">0</span></div>
+        <div class="pill"><b>Liv:</b> <span id="lives">3</span></div>
+        <div class="pill"><b>Tid:</b> <span id="time">60.0</span>s</div>
+      </div>
+      <div class="right">
+        <button id="restart">Starta om</button>
+        <button id="toggleHard">Svårighetsgrad: Normal</button>
+      </div>
+    </div>
+
+    <canvas id="c" width="960" height="540" aria-label="Råttfällan spelplan"></canvas>
+
+    <div class="help">
+      <b>Så spelar du:</b><br/>
+      • Flytta musen (eller dra på mobil) för att styra pinnen/proben.<br/>
+      • Klicka/tappa för att plocka en bricka när proben ligger över den.<br/>
+      • Rör du den vågiga metalltråden → <b>FÄLLAN SLÅR</b>: brickorna skvätter och du förlorar ett liv.<br/>
+      • Plocka alla målbrickor innan tiden tar slut. <br/><br/>
+      Tips: håll proben lugnt och nära brickan – det är “operation”-känsla med straff om du nuddar tråden.
+    </div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+
+  const scoreEl = document.getElementById('score');
+  const livesEl = document.getElementById('lives');
+  const timeEl = document.getElementById('time');
+  const targetColorNameEl = document.getElementById('targetColorName');
+  const restartBtn = document.getElementById('restart');
+  const toggleHardBtn = document.getElementById('toggleHard');
+
+  // --- Game configuration ---
+  const COLORS = [
+    { key: 'yellow', name: 'GUL',   fill: '#f4d21f' },
+    { key: 'red',    name: 'RÖD',   fill: '#d93a3a' },
+    { key: 'blue',   name: 'BLÅ',   fill: '#2f6fd6' },
+  ];
+
+  // Board area (wooden tray)
+  const board = { x: 210, y: 80, w: 540, h: 380, pad: 22 };
+
+  // Probe (stick tip)
+  const probe = { x: board.x + board.w/2, y: board.y + board.h/2, r: 10, glow: 0 };
+
+  // Wavy wire path (collision obstacle)
+  let wire = []; // array of points {x,y}
+  const wireRadius = 9; // collision thickness
+
+  // Tokens ("bricks")
+  let tokens = [];
+
+  // State
+  let score = 0;
+  let lives = 3;
+  let timeLeft = 60.0;
+  let running = true;
+  let gameOver = false;
+  let hardMode = false;
+
+  // Target color for the round
+  let targetColor = 'yellow';
+
+  // Input
+  let pointerDown = false;
+  let pointerX = probe.x, pointerY = probe.y;
+
+  // Effects
+  let trapFlash = 0; // 0..1
+  let shake = 0;
+  let lastT = performance.now();
+
+  // --- Helpers ---
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const dist2 = (ax, ay, bx, by) => {
+    const dx = ax - bx, dy = ay - by;
+    return dx*dx + dy*dy;
+  };
+
+  function pointToSegmentDistSq(px, py, ax, ay, bx, by) {
+    const abx = bx - ax, aby = by - ay;
+    const apx = px - ax, apy = py - ay;
+    const abLenSq = abx*abx + aby*aby || 1e-9;
+    let t = (apx*abx + apy*aby) / abLenSq;
+    t = clamp(t, 0, 1);
+    const cx = ax + t*abx, cy = ay + t*aby;
+    return dist2(px, py, cx, cy);
+  }
+
+  function collideProbeWithWire() {
+    const r = probe.r + wireRadius;
+    const r2 = r*r;
+    for (let i = 0; i < wire.length - 1; i++) {
+      const a = wire[i], b = wire[i+1];
+      if (pointToSegmentDistSq(probe.x, probe.y, a.x, a.y, b.x, b.y) <= r2) return true;
+    }
+    return false;
+  }
+
+  function insideBoard(x, y) {
+    return x >= board.x + board.pad && x <= board.x + board.w - board.pad &&
+           y >= board.y + board.pad && y <= board.y + board.h - board.pad;
+  }
+
+  function setTargetColor() {
+    // Pick one color as the goal, bias to yellow (like in the photo)
+    const pick = hardMode ? COLORS[Math.floor(Math.random()*COLORS.length)] : COLORS[0];
+    targetColor = pick.key;
+    targetColorNameEl.textContent = pick.name;
+    targetColorNameEl.style.color = pick.fill;
+  }
+
+  function buildWire() {
+    wire = [];
+    // A stylized wavy wire in the center, similar to the photo.
+    const midX = board.x + board.w*0.48;
+    const topY = board.y + 75;
+    const botY = board.y + board.h - 75;
+    const amp = 55;
+    const waves = 7;
+    const steps = 220;
+
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const y = topY + (botY - topY) * t;
+      const phase = t * Math.PI * 2 * waves;
+      const x = midX + Math.sin(phase) * amp * (0.65 + 0.35*Math.sin(t*Math.PI));
+      wire.push({ x, y });
+    }
+  }
+
+  function spawnTokens() {
+    tokens = [];
+    const N = hardMode ? 42 : 34;
+    const r = hardMode ? 14 : 15;
+
+    for (let i = 0; i < N; i++) {
+      // random color distribution like the photo: lots of red/blue, some yellow
+      const roll = Math.random();
+      let c = 'red';
+      if (roll < 0.24) c = 'yellow';
+      else if (roll < 0.62) c = 'blue';
+
+      // Place with simple rejection to avoid overlap too much
+      let x, y, tries = 0;
+      do {
+        x = board.x + board.pad + r + Math.random()*(board.w - 2*(board.pad + r));
+        y = board.y + board.pad + r + Math.random()*(board.h - 2*(board.pad + r));
+        tries++;
+      } while (
+        tries < 80 &&
+        ( // avoid wire area a bit
+          pointToSegmentDistSq(x, y, wire[0].x, wire[0].y, wire[wire.length-1].x, wire[wire.length-1].y) < 12000 ||
+          tokens.some(t => dist2(x, y, t.x, t.y) < (r + t.r + 2)**2)
+        )
+      );
+
+      tokens.push({
+        x, y, r,
+        vx: (Math.random()-0.5)*20,
+        vy: (Math.random()-0.5)*20,
+        color: c,
+        alive: true,
+      });
+    }
+  }
+
+  function triggerTrap() {
+    lives--;
+    livesEl.textContent = String(lives);
+    trapFlash = 1;
+    shake = 14;
+
+    // Scatter tokens outward from probe
+    for (const t of tokens) {
+      if (!t.alive) continue;
+      const dx = t.x - probe.x;
+      const dy = t.y - probe.y;
+      const d = Math.sqrt(dx*dx + dy*dy) || 1;
+      const push = (hardMode ? 520 : 420) / d;
+      t.vx += (dx / d) * push + (Math.random()-0.5)*80;
+      t.vy += (dy / d) * push + (Math.random()-0.5)*80;
+    }
+
+    if (lives <= 0) endGame(false);
+  }
+
+  function endGame(win) {
+    running = false;
+    gameOver = true;
+    // small extra score bonus on win
+    if (win) score += Math.floor(timeLeft * 5);
+    scoreEl.textContent = String(score);
+  }
+
+  function checkWin() {
+    // Win when all target-color tokens are collected
+    const remaining = tokens.some(t => t.alive && t.color === targetColor);
+    if (!remaining) endGame(true);
+  }
+
+  function resetGame() {
+    score = 0;
+    lives = 3;
+    timeLeft = hardMode ? 55.0 : 60.0;
+    running = true;
+    gameOver = false;
+    trapFlash = 0;
+    shake = 0;
+
+    buildWire();
+    setTargetColor();
+    spawnTokens();
+
+    probe.x = board.x + board.w/2;
+    probe.y = board.y + board.h/2;
+    pointerX = probe.x; pointerY = probe.y;
+
+    scoreEl.textContent = String(score);
+    livesEl.textContent = String(lives);
+    timeEl.textContent = timeLeft.toFixed(1);
+  }
+
+  // --- Input handling ---
+  function setPointerFromEvent(e) {
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+    pointerX = x; pointerY = y;
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    pointerDown = true;
+    canvas.setPointerCapture(e.pointerId);
+    setPointerFromEvent(e);
+    tryPickup(); // also allow tap-to-pick immediately
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    setPointerFromEvent(e);
+  });
+
+  canvas.addEventListener('pointerup', () => {
+    pointerDown = false;
+  });
+
+  canvas.addEventListener('click', () => {
+    tryPickup();
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === 'r') resetGame();
+  });
+
+  restartBtn.addEventListener('click', resetGame);
+
+  toggleHardBtn.addEventListener('click', () => {
+    hardMode = !hardMode;
+    toggleHardBtn.textContent = `Svårighetsgrad: ${hardMode ? 'Svår' : 'Normal'}`;
+    resetGame();
+  });
+
+  function tryPickup() {
+    if (!running) {
+      resetGame();
+      return;
+    }
+
+    // Must be inside board
+    if (!insideBoard(probe.x, probe.y)) return;
+
+    // Pick nearest token under probe
+    let best = null;
+    let bestD2 = Infinity;
+    for (const t of tokens) {
+      if (!t.alive) continue;
+      const d2 = dist2(probe.x, probe.y, t.x, t.y);
+      if (d2 <= (probe.r + t.r + 2)**2 && d2 < bestD2) {
+        best = t; bestD2 = d2;
+      }
+    }
+    if (!best) return;
+
+    // Collect token
+    best.alive = false;
+    probe.glow = 1;
+
+    // Scoring: reward target color, punish wrong
+    if (best.color === targetColor) score += hardMode ? 20 : 15;
+    else score = Math.max(0, score - (hardMode ? 10 : 6));
+
+    scoreEl.textContent = String(score);
+    checkWin();
+  }
+
+  // --- Simulation update ---
+  function update(dt) {
+    if (running) {
+      timeLeft -= dt;
+      if (timeLeft <= 0) {
+        timeLeft = 0;
+        endGame(false);
+      }
+    }
+    timeEl.textContent = timeLeft.toFixed(1);
+
+    // Smooth probe movement
+    const speed = hardMode ? 16 : 12;
+    probe.x += (pointerX - probe.x) * (1 - Math.exp(-speed * dt));
+    probe.y += (pointerY - probe.y) * (1 - Math.exp(-speed * dt));
+
+    // Slightly constrain probe inside the play area (with soft edge)
+    const minX = board.x + 8, maxX = board.x + board.w - 8;
+    const minY = board.y + 8, maxY = board.y + board.h - 8;
+    probe.x = clamp(probe.x, minX, maxX);
+    probe.y = clamp(probe.y, minY, maxY);
+
+    // Trap collision
+    if (running && collideProbeWithWire()) {
+      triggerTrap();
+    }
+
+    // Token physics (simple)
+    const drag = hardMode ? 2.7 : 3.3;
+    for (const t of tokens) {
+      if (!t.alive) continue;
+
+      // Integrate
+      t.x += t.vx * dt;
+      t.y += t.vy * dt;
+
+      // Drag
+      t.vx *= Math.exp(-drag * dt);
+      t.vy *= Math.exp(-drag * dt);
+
+      // Bounce off board inner walls
+      const left = board.x + board.pad + t.r;
+      const right = board.x + board.w - board.pad - t.r;
+      const top = board.y + board.pad + t.r;
+      const bottom = board.y + board.h - board.pad - t.r;
+
+      if (t.x < left)  { t.x = left;  t.vx = Math.abs(t.vx) * 0.9; }
+      if (t.x > right) { t.x = right; t.vx = -Math.abs(t.vx) * 0.9; }
+      if (t.y < top)   { t.y = top;   t.vy = Math.abs(t.vy) * 0.9; }
+      if (t.y > bottom){ t.y = bottom;t.vy = -Math.abs(t.vy) * 0.9; }
+    }
+
+    // Effects decay
+    trapFlash = Math.max(0, trapFlash - dt * 1.6);
+    shake = Math.max(0, shake - dt * 18);
+    probe.glow = Math.max(0, probe.glow - dt * 2.2);
+  }
+
+  // --- Rendering ---
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Camera shake
+    const sx = (Math.random()-0.5) * shake;
+    const sy = (Math.random()-0.5) * shake;
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    // Background margin
+    ctx.fillStyle = '#f4f4f4';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Wooden frame
+    roundRect(ctx, board.x - 26, board.y - 26, board.w + 52, board.h + 52, 26);
+    ctx.fillStyle = '#d6b07a';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.20)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    // Inner tray
+    roundRect(ctx, board.x, board.y, board.w, board.h, 18);
+    ctx.fillStyle = '#fdfdfd';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Ruler-ish ticks along sides (just for vibe)
+    drawRulerTicks();
+
+    // Wavy wire
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#b8b8b8';
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.moveTo(wire[0].x, wire[0].y);
+    for (let i = 1; i < wire.length; i++) ctx.lineTo(wire[i].x, wire[i].y);
+    ctx.stroke();
+
+    // Wire highlight
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(wire[0].x, wire[0].y);
+    for (let i = 1; i < wire.length; i++) ctx.lineTo(wire[i].x, wire[i].y);
+    ctx.stroke();
+
+    // Tokens
+    for (const t of tokens) {
+      if (!t.alive) continue;
+      const c = COLORS.find(x => x.key === t.color)?.fill ?? '#999';
+      drawToken(t.x, t.y, t.r, c, t.color === targetColor);
+    }
+
+    // Probe (stick tip)
+    drawProbe();
+
+    // Trap flash overlay
+    if (trapFlash > 0) {
+      ctx.globalAlpha = trapFlash * 0.28;
+      ctx.fillStyle = '#ff2a2a';
+      ctx.fillRect(board.x, board.y, board.w, board.h);
+      ctx.globalAlpha = 1;
+    }
+
+    // Endgame overlay
+    if (gameOver) {
+      const win = !tokens.some(t => t.alive && t.color === targetColor) && lives > 0 && timeLeft > 0;
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = '#111';
+      roundRect(ctx, 190, 170, 580, 200, 18);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = '#fff';
+      ctx.font = '700 42px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(win ? 'DU VANN!' : 'SPELET SLUT', canvas.width/2, 240);
+
+      ctx.font = '400 18px system-ui, sans-serif';
+      ctx.fillText(`Poäng: ${score}`, canvas.width/2, 275);
+      ctx.fillText(`Tryck för att spela igen (eller klicka Starta om)`, canvas.width/2, 312);
+
+      // Click to restart
+      canvas.style.cursor = 'pointer';
+    } else {
+      canvas.style.cursor = 'crosshair';
+    }
+
+    ctx.restore();
+  }
+
+  function drawToken(x, y, r, fill, isTarget) {
+    // shadow
+    ctx.beginPath();
+    ctx.arc(x + 2, y + 3, r, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    ctx.fill();
+
+    // body
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI*2);
+    ctx.fillStyle = fill;
+    ctx.fill();
+
+    // inner ring
+    ctx.beginPath();
+    ctx.arc(x - 3, y - 3, r*0.55, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.fill();
+
+    // target outline
+    if (isTarget) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(x, y, r + 2.5, 0, Math.PI*2);
+      ctx.stroke();
+    }
+  }
+
+  function drawProbe() {
+    // Simple “stick” line + tip circle
+    const handleX = board.x + board.w + 140;
+    const handleY = board.y - 60;
+
+    // stick
+    ctx.strokeStyle = '#c9a57a';
+    ctx.lineWidth = 10;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(handleX, handleY);
+    ctx.lineTo(probe.x, probe.y);
+    ctx.stroke();
+
+    // tip glow
+    if (probe.glow > 0) {
+      ctx.globalAlpha = probe.glow;
+      ctx.beginPath();
+      ctx.arc(probe.x, probe.y, probe.r + 10, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255, 215, 0, 0.35)';
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // tip
+    ctx.beginPath();
+    ctx.arc(probe.x, probe.y, probe.r, 0, Math.PI*2);
+    ctx.fillStyle = '#1b1b1b';
+    ctx.fill();
+
+    // highlight
+    ctx.beginPath();
+    ctx.arc(probe.x - 3, probe.y - 3, probe.r*0.45, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.fill();
+  }
+
+  function drawRulerTicks() {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,0,0,0.23)';
+    ctx.lineWidth = 1;
+
+    // Left side
+    for (let i = 0; i <= 20; i++) {
+      const y = board.y + (board.h * i/20);
+      const len = (i % 5 === 0) ? 14 : 8;
+      ctx.beginPath();
+      ctx.moveTo(board.x - 8, y);
+      ctx.lineTo(board.x - 8 - len, y);
+      ctx.stroke();
+    }
+
+    // Right side
+    for (let i = 0; i <= 20; i++) {
+      const y = board.y + (board.h * i/20);
+      const len = (i % 5 === 0) ? 14 : 8;
+      ctx.beginPath();
+      ctx.moveTo(board.x + board.w + 8, y);
+      ctx.lineTo(board.x + board.w + 8 + len, y);
+      ctx.stroke();
+    }
+
+    // Bottom side
+    for (let i = 0; i <= 24; i++) {
+      const x = board.x + (board.w * i/24);
+      const len = (i % 6 === 0) ? 14 : 8;
+      ctx.beginPath();
+      ctx.moveTo(x, board.y + board.h + 8);
+      ctx.lineTo(x, board.y + board.h + 8 + len);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    const rr = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  }
+
+  // --- Main loop ---
+  function loop(now) {
+    const dt = Math.min(0.033, (now - lastT) / 1000);
+    lastT = now;
+
+    update(dt);
+    draw();
+
+    requestAnimationFrame(loop);
+  }
+
+  // Allow click to restart after game over
+  canvas.addEventListener('pointerdown', () => {
+    if (gameOver) resetGame();
+  });
+
+  // Init
+  resetGame();
+  requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
