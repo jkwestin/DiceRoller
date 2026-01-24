@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Kawaii (1P vs AI) — Single File</title>
+  <style>
+    :root { color-scheme: dark; }
+    body{
+      margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background:#0b0c10; color:#e8e8e8;
+      display:flex; align-items:center; justify-content:center; min-height:100vh;
+    }
+    .wrap{ width:min(980px, 96vw); padding:16px; }
+    .top{
+      display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between;
+      margin-bottom:12px;
+    }
+    h1{ font-size:18px; margin:0; font-weight:650; letter-spacing:.2px;}
+    .panel{
+      display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+      background:#12141a; border:1px solid #222534; border-radius:14px; padding:10px 12px;
+    }
+    .panel label{ font-size:13px; opacity:.9; display:flex; gap:8px; align-items:center; }
+    .panel select,.panel button{
+      background:#171a22; color:#e8e8e8;
+      border:1px solid #2a2e3f; border-radius:10px; padding:8px 10px;
+      font-size:13px;
+    }
+    .panel button{ cursor:pointer; }
+    .panel button:hover{ border-color:#3a4060; }
+    .status{
+      background:#12141a; border:1px solid #222534; border-radius:14px; padding:10px 12px;
+      font-size:13px; line-height:1.35; min-width:min(480px, 96vw);
+    }
+    .row{ display:flex; gap:14px; flex-wrap:wrap; }
+    .boardCard{
+      flex: 1 1 520px;
+      background:#12141a; border:1px solid #222534; border-radius:18px;
+      padding:12px;
+    }
+    .helpCard{
+      flex: 1 1 300px;
+      background:#12141a; border:1px solid #222534; border-radius:18px;
+      padding:12px;
+      font-size:13px;
+      opacity:.95;
+    }
+    .helpCard ul{ margin:8px 0 0 18px; padding:0; }
+    .helpCard li{ margin:6px 0; }
+    svg{ width:100%; height:auto; display:block; }
+    .edge{ stroke:#6b6f7a; stroke-width:4; stroke-linecap:round; opacity:.6; }
+    .nodeOuter{ fill:#0f1118; stroke:#2a2e3f; stroke-width:3; }
+    .nodeHit{ cursor:pointer; }
+    .pieceBlue{ fill:#4aa3ff; }
+    .pieceRed{ fill:#ff4a4a; }
+    .pieceRing{ fill:none; stroke:#00000066; stroke-width:4; }
+    .selectedGlow{ filter: drop-shadow(0 0 10px rgba(74,163,255,.75)); }
+    .legalGlow{ filter: drop-shadow(0 0 8px rgba(232,232,232,.55)); }
+    .small{ opacity:.8; font-size:12px; }
+    .kbd{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      border:1px solid #2a2e3f; padding:1px 6px; border-radius:8px; background:#171a22; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>Kawaii — 1 Player vs AI (single HTML)</h1>
+    <div class="panel">
+      <label>AI:
+        <select id="aiDepth">
+          <option value="4">Easy (depth 4)</option>
+          <option value="6" selected>Normal (depth 6)</option>
+          <option value="8">Hard (depth 8)</option>
+        </select>
+      </label>
+      <label title="Some variants win instantly by stepping into the center.">
+        <input id="centerWin" type="checkbox" />
+        Center = instant win
+      </label>
+      <button id="newGame">New game</button>
+      <button id="undoBtn">Undo</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="boardCard">
+      <div class="status" id="status"></div>
+      <div class="small" style="margin:8px 2px 10px;">
+        You are <span style="color:#4aa3ff;font-weight:650;">Blue</span>. AI is <span style="color:#ff4a4a;font-weight:650;">Red</span>.
+        Click a blue piece, then click a highlighted destination.
+      </div>
+
+      <svg id="svg" viewBox="0 0 640 480" aria-label="Kawaii board">
+        <!-- edges injected by JS -->
+        <g id="edges"></g>
+        <g id="nodes"></g>
+      </svg>
+    </div>
+
+    <div class="helpCard">
+      <div style="font-weight:650;margin-bottom:6px;">Rules (this implementation)</div>
+      <ul>
+        <li>Move 1 piece per turn to an <b>adjacent</b> empty node (follow the lines).</li>
+        <li>No captures, no jumps.</li>
+        <li>You win if the opponent has <b>no legal moves</b>.</li>
+        <li>Optional variant: <b>Center = instant win</b> (toggle above).</li>
+      </ul>
+      <div style="margin-top:12px;">
+        Tips:
+        <ul>
+          <li>The center is a mobility hub — strong, but don’t get boxed in.</li>
+          <li>Try to reduce the AI’s mobility (number of legal moves).</li>
+          <li><span class="kbd">Undo</span> rolls back one full turn (you + AI).</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ----------------------------
+  // Board model (9 nodes: center + 8 around)
+  // Indexing:
+  // 0 center
+  // 1 top, then clockwise: 2 top-right, 3 right, 4 bottom-right, 5 bottom, 6 bottom-left, 7 left, 8 top-left
+  //
+  // Connections used here:
+  // - Center connected to all outer nodes.
+  // - Outer nodes connected in a ring (adjacent clockwise/counterclockwise).
+  //
+  // This matches a common "Kawaii-like" graph and plays well for the puzzle videos.
+  // ----------------------------
+  const N = 9;
+  const CENTER = 0;
+  const OUTERS = [1,2,3,4,5,6,7,8];
+
+  const adj = Array.from({length:N}, () => []);
+  function connect(a,b){
+    if(!adj[a].includes(b)) adj[a].push(b);
+    if(!adj[b].includes(a)) adj[b].push(a);
+  }
+  // Center spokes
+  for(const o of OUTERS) connect(CENTER, o);
+  // Outer ring
+  for(let i=0;i<OUTERS.length;i++){
+    const a = OUTERS[i];
+    const b = OUTERS[(i+1)%OUTERS.length];
+    connect(a,b);
+  }
+
+  // Coordinates for SVG layout
+  const coords = {
+    0:[320,240],
+    1:[320, 90],
+    2:[440,120],
+    3:[500,240],
+    4:[440,360],
+    5:[320,390],
+    6:[200,360],
+    7:[140,240],
+    8:[200,120]
+  };
+
+  // Initial position: Blue on bottom/left 4 outer nodes, Red on top/right 4 outer nodes, center empty.
+  // Blue: 5,6,7,8  (bottom, bottom-left, left, top-left)
+  // Red: 1,2,3,4  (top, top-right, right, bottom-right)
+  function initialState(){
+    const s = Array(N).fill(0);
+    for(const i of [5,6,7,8]) s[i] =  1; // Blue = +1
+    for(const i of [1,2,3,4]) s[i] = -1; // Red  = -1
+    s[0] = 0;
+    return s;
+  }
+
+  // UI refs
+  const svg = document.getElementById('svg');
+  const edgesG = document.getElementById('edges');
+  const nodesG = document.getElementById('nodes');
+  const statusEl = document.getElementById('status');
+  const depthSel = document.getElementById('aiDepth');
+  const centerWinChk = document.getElementById('centerWin');
+  const newGameBtn = document.getElementById('newGame');
+  const undoBtn = document.getElementById('undoBtn');
+
+  // Game state
+  let state = initialState();
+  let turn = 1; // +1 Blue (human) starts, -1 Red (AI)
+  let selected = null; // node index or null
+  let legalDests = []; // array of dest node indices for selected
+  let gameOver = false;
+  let history = []; // stack for undo (stores snapshots)
+
+  // ----------------------------
+  // Helpers: moves, terminal, evaluation
+  // ----------------------------
+  function cloneState(s){ return s.slice(); }
+
+  function movesForPlayer(s, player){
+    // returns array of {from, to}
+    const ms = [];
+    for(let i=0;i<N;i++){
+      if(s[i] !== player) continue;
+      for(const j of adj[i]){
+        if(s[j] === 0) ms.push({from:i, to:j});
+      }
+    }
+    return ms;
+  }
+
+  function applyMove(s, mv){
+    const ns = cloneState(s);
+    ns[mv.to] = ns[mv.from];
+    ns[mv.from] = 0;
+    return ns;
+  }
+
+  function hasNoMoves(s, player){
+    return movesForPlayer(s, player).length === 0;
+  }
+
+  function centerInstantWinner(s, lastPlayerJustMoved){
+    // If variant enabled, stepping into center wins immediately.
+    if(!centerWinChk.checked) return 0;
+    if(s[CENTER] === lastPlayerJustMoved) return lastPlayerJustMoved;
+    return 0;
+  }
+
+  function isTerminal(s, playerToMove, lastPlayerJustMoved){
+    // returns {terminal:boolean, winner: -1/0/+1}
+    const cw = centerInstantWinner(s, lastPlayerJustMoved);
+    if(cw !== 0) return {terminal:true, winner:cw};
+
+    // If current player to move has no moves, they lose => winner is -playerToMove
+    if(hasNoMoves(s, playerToMove)) return {terminal:true, winner:-playerToMove};
+    return {terminal:false, winner:0};
+  }
+
+  function evalState(s){
+    // Positive is good for Red(AI=-1) or Blue? We'll evaluate from AI perspective (Red = -1).
+    // We'll return score
