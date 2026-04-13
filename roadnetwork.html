@@ -2,21 +2,27 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>OSM Explorer - Forward Bias</title>
+    <title>OSM Explorer - Advanced Logic</title>
     <style>
         body { margin: 0; overflow: hidden; background: #fff; font-family: monospace; }
-        #controls { position: absolute; top: 15px; left: 15px; z-index: 10; background: #fff; padding: 12px; border: 1px solid #000; box-shadow: 4px 4px 0 #000; }
-        input { border: 1px solid #000; padding: 5px; outline: none; }
-        button { cursor: pointer; background: #000; color: #fff; border: none; padding: 5px 10px; font-weight: bold; }
-        #status { font-size: 10px; margin-top: 5px; color: #666; }
+        #controls { 
+            position: absolute; top: 15px; left: 15px; z-index: 10; 
+            background: #fff; padding: 15px; border: 2px solid #000; 
+        }
+        input { border: 1px solid #000; padding: 8px; width: 200px; outline: none; }
+        button { 
+            cursor: pointer; background: #000; color: #fff; border: none; 
+            padding: 8px 15px; font-weight: bold; vertical-align: top;
+        }
+        #status { font-size: 10px; margin-top: 8px; color: #666; text-transform: uppercase; }
         canvas { position: absolute; top: 0; left: 0; }
     </style>
 </head>
 <body>
 
 <div id="controls">
-    <strong>NET_SCANNER v2</strong><br><br>
-    <input type="text" id="cityInput" placeholder="CITY NAME">
+    <strong>NET_SCANNER_V3</strong><br><br>
+    <input type="text" id="cityInput" placeholder="CITY NAME" onkeyup="if(event.key==='Enter') loadCity()">
     <button onclick="loadCity()">SCAN</button>
     <div id="status">IDLE</div>
 </div>
@@ -30,29 +36,35 @@
     const fgCtx = fgCanvas.getContext('2d');
     
     let graph = {}, nodes = {}, isRunning = false;
-    let currentNodeId = null, targetNodeId = null, previousNodeId = null, progress = 0;
+    let currentNodeId = null, targetNodeId = null, progress = 0;
+    
+    // History to prevent local loops
+    let visitedHistory = []; 
+    const MAX_HISTORY = 15;
 
-    window.addEventListener('resize', () => {
+    function resize() {
         bgCanvas.width = fgCanvas.width = window.innerWidth;
         bgCanvas.height = fgCanvas.height = window.innerHeight;
-    });
-    window.dispatchEvent(new Event('resize'));
+    }
+    window.addEventListener('resize', resize);
+    resize();
 
     async function loadCity() {
         const city = document.getElementById('cityInput').value;
         if (!city) return;
+        
         isRunning = false;
-        document.getElementById('status').innerText = "LOCATING...";
+        visitedHistory = []; 
+        document.getElementById('status').innerText = "ESTABLISHING UPLINK...";
 
         try {
             const geo = await fetch(`https://nominatim.openstreetmap.org/search?city=${encodeURIComponent(city)}&format=json&limit=1`).then(r => r.json());
-            if (!geo.length) throw new Error("CITY NOT FOUND");
+            if (!geo.length) throw new Error("LOC_NOT_FOUND");
 
             const b = geo[0].boundingbox;
-            // High-speed query: Primary/Secondary/Tertiary only
-            const query = `[out:json][timeout:20];way["highway"~"primary|secondary|tertiary"](${b[0]},${b[2]},${b[1]},${b[3]});(._;>;);out skel;`;
+            const query = `[out:json][timeout:25];way["highway"~"primary|secondary|tertiary"](${b[0]},${b[2]},${b[1]},${b[3]});(._;>;);out skel;`;
 
-            document.getElementById('status').innerText = "DOWNLOADING ROAD_NET...";
+            document.getElementById('status').innerText = "DOWNLOADING ROAD_DATA...";
             const osmRes = await fetch(`https://overpass-api.de/api/interpreter`, {
                 method: 'POST',
                 body: `data=${encodeURIComponent(query)}`
@@ -79,7 +91,7 @@
         });
 
         bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
-        bgCtx.strokeStyle = "#f0f0f0"; // Ghost network
+        bgCtx.strokeStyle = "#eee"; 
         bgCtx.lineWidth = 1;
         bgCtx.beginPath();
 
@@ -102,10 +114,9 @@
         const ids = Object.keys(graph);
         if (ids.length) {
             currentNodeId = ids[Math.floor(Math.random() * ids.length)];
-            previousNodeId = null;
             pickNext();
             isRunning = true;
-            document.getElementById('status').innerText = "SCANNING...";
+            document.getElementById('status').innerText = "SCANNING ACTIVE";
             animate();
         }
     }
@@ -114,13 +125,23 @@
         const neighbors = graph[currentNodeId];
         if (!neighbors) return;
 
-        // Logic: Try to avoid the node we just came from
-        const options = neighbors.filter(id => id !== previousNodeId);
-        const nextId = (options.length > 0) 
-            ? options[Math.floor(Math.random() * options.length)] 
-            : neighbors[0]; // Forced backtrack
+        // Filter: nodes we haven't visited in the last 15 steps
+        const novelOptions = neighbors.filter(id => !visitedHistory.includes(id));
+        
+        let nextId;
+        if (novelOptions.length > 0) {
+            nextId = novelOptions[Math.floor(Math.random() * novelOptions.length)];
+        } else {
+            // If all neighbors were visited recently, just pick one that isn't the immediate last
+            const immediateLast = visitedHistory[visitedHistory.length - 1];
+            const backOptions = neighbors.filter(id => id !== immediateLast);
+            nextId = backOptions.length > 0 ? backOptions[0] : neighbors[0];
+        }
 
-        previousNodeId = currentNodeId;
+        // Update History
+        visitedHistory.push(currentNodeId);
+        if (visitedHistory.length > MAX_HISTORY) visitedHistory.shift();
+
         targetNodeId = nextId;
         progress = 0;
     }
@@ -135,21 +156,20 @@
         const curX = start.x + (end.x - start.x) * progress;
         const curY = start.y + (end.y - start.y) * progress;
 
-        // Path trail
-        fgCtx.strokeStyle = "black";
-        fgCtx.lineWidth = 2.5;
+        fgCtx.strokeStyle = "#000";
+        fgCtx.lineWidth = 3;
+        fgCtx.lineCap = "round";
         fgCtx.beginPath();
         fgCtx.moveTo(start.x, start.y);
         fgCtx.lineTo(curX, curY);
         fgCtx.stroke();
 
-        // Scanner Head
-        fgCtx.fillStyle = "black";
+        fgCtx.fillStyle = "#000";
         fgCtx.beginPath();
-        fgCtx.arc(curX, curY, 4, 0, Math.PI * 2);
+        fgCtx.arc(curX, curY, 5, 0, Math.PI * 2);
         fgCtx.fill();
 
-        progress += 0.12; 
+        progress += 0.1; 
         if (progress >= 1) {
             currentNodeId = targetNodeId;
             pickNext();
