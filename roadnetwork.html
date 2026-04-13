@@ -2,134 +2,116 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>OSM Network Viewer</title>
+    <title>Fast OSM Network</title>
     <style>
         body { margin: 0; overflow: hidden; background: #fff; font-family: sans-serif; }
-        #controls { position: absolute; top: 15px; left: 15px; z-index: 10; background: white; padding: 15px; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; width: 180px; }
-        button { padding: 8px 12px; background: #000; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-        #status { font-size: 12px; color: #666; margin-top: 8px; }
+        #controls { position: absolute; top: 15px; left: 15px; z-index: 10; background: white; padding: 12px; border: 1px solid #000; }
+        input { padding: 5px; border: 1px solid #000; width: 150px; }
+        button { cursor: pointer; background: #000; color: #fff; border: none; padding: 5px 10px; }
+        #status { font-size: 11px; margin-top: 5px; text-transform: uppercase; }
+        canvas { display: block; position: absolute; top: 0; left: 0; }
     </style>
 </head>
 <body>
 
 <div id="controls">
-    <input type="text" id="cityInput" placeholder="City Name (e.g., Paris)">
-    <button onclick="loadCity()">Load Map</button>
-    <div id="status">Enter a city to begin.</div>
+    <input type="text" id="cityInput" placeholder="City (e.g. Milan)">
+    <button onclick="loadCity()">LOAD</button>
+    <div id="status">Ready</div>
 </div>
-<canvas id="mapCanvas"></canvas>
+<canvas id="bgCanvas"></canvas>
+<canvas id="fgCanvas"></canvas>
 
 <script>
-    const canvas = document.getElementById('mapCanvas');
-    const ctx = canvas.getContext('2d');
-    let graph = {};
-    let nodes = {};
-    let allEdges = []; // Store for background rendering
-    let currentNodeId = null;
-    let targetNodeId = null;
-    let progress = 0;
-    let isRunning = false;
+    const bgCanvas = document.getElementById('bgCanvas');
+    const fgCanvas = document.getElementById('fgCanvas');
+    const bgCtx = bgCanvas.getContext('2d');
+    const fgCtx = fgCanvas.getContext('2d');
+    
+    let graph = {}, nodes = {}, isRunning = false;
+    let currentNodeId = null, targetNodeId = null, progress = 0;
 
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    function resize() {
+        bgCanvas.width = fgCanvas.width = window.innerWidth;
+        bgCanvas.height = fgCanvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
 
     async function loadCity() {
-        const cityName = document.getElementById('cityInput').value;
+        const city = document.getElementById('cityInput').value;
         const status = document.getElementById('status');
-        if (!cityName) return;
+        if (!city) return;
 
         isRunning = false;
-        status.innerText = "Searching city...";
+        status.innerText = "Locating...";
 
         try {
-            const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?city=${encodeURIComponent(cityName)}&format=json&limit=1`);
-            const geoData = await geoRes.json();
-            if (!geoData.length) throw new Error("City not found.");
+            const geo = await fetch(`https://nominatim.openstreetmap.org/search?city=${encodeURIComponent(city)}&format=json&limit=1`).then(r => r.json());
+            if (!geo.length) throw new Error("Not found");
 
-            const bbox = geoData[0].boundingbox;
-            // Get roads: primary, secondary, tertiary, and residential
-            const query = `[out:json][timeout:30];
-                way["highway"~"primary|secondary|tertiary|residential"](${bbox[0]},${bbox[2]},${bbox[1]},${bbox[3]});
-                (._;>;);
-                out body;`;
+            const b = geo[0].boundingbox;
+            // OPTIMIZED QUERY: Only major roads, no residential/service roads to save data
+            const query = `[out:json][timeout:20];way["highway"~"primary|secondary|tertiary"](${b[0]},${b[2]},${b[1]},${b[3]});(._;>;);out skel;`;
 
-            status.innerText = "Downloading network...";
+            status.innerText = "Fetching major roads...";
             const osmRes = await fetch(`https://overpass-api.de/api/interpreter`, {
                 method: 'POST',
                 body: `data=${encodeURIComponent(query)}`
             });
-
-            if (!osmRes.ok) throw new Error("API Overloaded. Try again in 10s.");
-            const osmData = await osmRes.json();
-            processData(osmData, bbox);
+            const data = await osmRes.json();
+            
+            parseAndRender(data, b);
         } catch (e) {
             status.innerText = "Error: " + e.message;
         }
     }
 
-    function processData(data, bbox) {
-        graph = {};
-        nodes = {};
-        allEdges = [];
-        const minLat = parseFloat(bbox[0]), maxLat = parseFloat(bbox[1]);
-        const minLon = parseFloat(bbox[2]), maxLon = parseFloat(bbox[3]);
+    function parseAndRender(data, b) {
+        graph = {}; nodes = {};
+        const [minLat, maxLat, minLon, maxLon] = [parseFloat(b[0]), parseFloat(b[1]), parseFloat(b[2]), parseFloat(b[3])];
 
-        // 1. Map Nodes
         data.elements.forEach(el => {
             if (el.type === 'node') {
                 nodes[el.id] = {
-                    x: ((el.lon - minLon) / (maxLon - minLon)) * canvas.width,
-                    y: (1 - (el.lat - minLat) / (maxLat - minLat)) * canvas.height
+                    x: ((el.lon - minLon) / (maxLon - minLon)) * bgCanvas.width,
+                    y: (1 - (el.lat - minLat) / (maxLat - minLat)) * bgCanvas.height
                 };
             }
         });
 
-        // 2. Build Graph & Edge List
+        bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+        bgCtx.strokeStyle = "#eee"; // Very light grey
+        bgCtx.lineWidth = 1;
+        bgCtx.beginPath();
+
         data.elements.forEach(el => {
             if (el.type === 'way' && el.nodes) {
                 for (let i = 0; i < el.nodes.length - 1; i++) {
                     const u = el.nodes[i], v = el.nodes[i+1];
                     if (nodes[u] && nodes[v]) {
+                        bgCtx.moveTo(nodes[u].x, nodes[u].y);
+                        bgCtx.lineTo(nodes[v].x, nodes[v].y);
                         if (!graph[u]) graph[u] = [];
                         if (!graph[v]) graph[v] = [];
-                        graph[u].push(v);
-                        graph[v].push(u);
-                        allEdges.push([nodes[u], nodes[v]]);
+                        graph[u].push(v); graph[v].push(u);
                     }
                 }
             }
         });
+        bgCtx.stroke();
 
-        const nodeIds = Object.keys(graph);
-        if (nodeIds.length === 0) return;
-
-        currentNodeId = nodeIds[Math.floor(Math.random() * nodeIds.length)];
-        pickNextTarget();
-        
-        // Initial Draw
-        drawBackground();
-        
-        document.getElementById('status').innerText = "Network loaded. Scanning...";
-        isRunning = true;
-        animate();
+        const ids = Object.keys(graph);
+        if (ids.length) {
+            currentNodeId = ids[Math.floor(Math.random() * ids.length)];
+            pickNext();
+            isRunning = true;
+            document.getElementById('status').innerText = "Scanning network...";
+            animate();
+        }
     }
 
-    function drawBackground() {
-        ctx.fillStyle = "white";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        ctx.strokeStyle = "#e0e0e0"; // Light Grey Network
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        allEdges.forEach(edge => {
-            ctx.moveTo(edge[0].x, edge[0].y);
-            ctx.lineTo(edge[1].x, edge[1].y);
-        });
-        ctx.stroke();
-    }
-
-    function pickNextTarget() {
+    function pickNext() {
         const neighbors = graph[currentNodeId];
         targetNodeId = neighbors[Math.floor(Math.random() * neighbors.length)];
         progress = 0;
@@ -138,43 +120,36 @@
     function animate() {
         if (!isRunning) return;
 
-        // We don't want to fade the background, so we re-draw it every frame
-        // or draw the "trail" on a separate layer. For simplicity, we just 
-        // draw the background and the moving pulse.
-        drawBackground();
+        // Clear only the foreground (the moving black dot)
+        fgCtx.clearRect(0, 0, fgCanvas.width, fgCanvas.height);
 
-        if (currentNodeId && targetNodeId) {
-            const start = nodes[currentNodeId];
-            const end = nodes[targetNodeId];
+        const start = nodes[currentNodeId];
+        const end = nodes[targetNodeId];
 
-            const curX = start.x + (end.x - start.x) * progress;
-            const curY = start.y + (end.y - start.y) * progress;
+        const curX = start.x + (end.x - start.x) * progress;
+        const curY = start.y + (end.y - start.y) * progress;
 
-            // Draw current path in Black
-            ctx.beginPath();
-            ctx.strokeStyle = "black";
-            ctx.lineWidth = 3;
-            ctx.moveTo(start.x, start.y);
-            ctx.lineTo(curX, curY);
-            ctx.stroke();
+        // Draw current segment
+        fgCtx.strokeStyle = "black";
+        fgCtx.lineWidth = 2;
+        fgCtx.beginPath();
+        fgCtx.moveTo(start.x, start.y);
+        fgCtx.lineTo(curX, curY);
+        fgCtx.stroke();
 
-            // Draw Radar Head
-            ctx.beginPath();
-            ctx.arc(curX, curY, 5, 0, Math.PI * 2);
-            ctx.fillStyle = "black";
-            ctx.fill();
+        // Draw pulse
+        fgCtx.fillStyle = "black";
+        fgCtx.beginPath();
+        fgCtx.arc(curX, curY, 4, 0, Math.PI * 2);
+        fgCtx.fill();
 
-            progress += 0.1; 
-
-            if (progress >= 1) {
-                currentNodeId = targetNodeId;
-                pickNextTarget();
-            }
+        progress += 0.15; // Faster speed
+        if (progress >= 1) {
+            currentNodeId = targetNodeId;
+            pickNext();
         }
-
         requestAnimationFrame(animate);
     }
 </script>
-
 </body>
 </html>
