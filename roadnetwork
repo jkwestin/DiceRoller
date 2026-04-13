@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>OSM Radar Network</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #fff; font-family: 'Courier New', Courier, monospace; }
+        #controls { position: absolute; top: 20px; left: 20px; z-index: 10; background: rgba(255,255,255,0.9); padding: 15px; border: 1px solid #000; }
+        input { border: 1px solid #000; padding: 5px; }
+        button { cursor: pointer; background: #000; color: #fff; border: none; padding: 5px 10px; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+<div id="controls">
+    <strong>CITY RADAR</strong><br><br>
+    <input type="text" id="cityInput" placeholder="Enter City (e.g. Kyoto)">
+    <button onclick="loadCity()">SCAN</button>
+    <p id="status" style="font-size: 12px;">Ready.</p>
+</div>
+<canvas id="mapCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('mapCanvas');
+    const ctx = canvas.getContext('2d');
+    let graph = {};
+    let nodes = {};
+    let currentNodeId = null;
+    let targetNodeId = null;
+    let progress = 0; // Movement between nodes (0 to 1)
+    let isRunning = false;
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    async function loadCity() {
+        const cityName = document.getElementById('cityInput').value;
+        const status = document.getElementById('status');
+        if (!cityName) return;
+
+        status.innerText = "LOCATING...";
+        
+        try {
+            const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?city=${cityName}&format=json&limit=1`);
+            const geoData = await geoRes.json();
+            if (geoData.length === 0) throw new Error("CITY NOT FOUND");
+            
+            const bbox = geoData[0].boundingbox; 
+            const query = `[out:json];way["highway"](${bbox[0]},${bbox[2]},${bbox[1]},${bbox[3]});node(w);out;`;
+            
+            status.innerText = "GATHERING DATA...";
+            const osmRes = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
+            const osmData = await osmRes.json();
+
+            processData(osmData, bbox);
+        } catch (e) {
+            status.innerText = "ERROR: " + e.message;
+        }
+    }
+
+    function processData(data, bbox) {
+        graph = {};
+        nodes = {};
+        const minLat = parseFloat(bbox[0]), maxLat = parseFloat(bbox[1]);
+        const minLon = parseFloat(bbox[2]), maxLon = parseFloat(bbox[3]);
+
+        data.elements.forEach(el => {
+            if (el.type === 'node') {
+                nodes[el.id] = {
+                    x: ((el.lon - minLon) / (maxLon - minLon)) * canvas.width,
+                    y: (1 - (el.lat - minLat) / (maxLat - minLat)) * canvas.height
+                };
+            }
+        });
+
+        data.elements.forEach(el => {
+            if (el.type === 'way' && el.nodes) {
+                for (let i = 0; i < el.nodes.length - 1; i++) {
+                    const u = el.nodes[i], v = el.nodes[i+1];
+                    if (!graph[u]) graph[u] = [];
+                    if (!graph[v]) graph[v] = [];
+                    graph[u].push(v);
+                    graph[v].push(u);
+                }
+            }
+        });
+
+        const nodeIds = Object.keys(graph);
+        currentNodeId = nodeIds[Math.floor(Math.random() * nodeIds.length)];
+        pickNextTarget();
+        
+        // Initial clean white slate
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        document.getElementById('status').innerText = "SCANNING NETWORK...";
+        isRunning = true;
+        animate();
+    }
+
+    function pickNextTarget() {
+        const neighbors = graph[currentNodeId];
+        if (neighbors && neighbors.length > 0) {
+            targetNodeId = neighbors[Math.floor(Math.random() * neighbors.length)];
+        }
+        progress = 0;
+    }
+
+    function animate() {
+        if (!isRunning) return;
+
+        // THE RADAR TRICK: Draw a faint white overlay every frame
+        // This makes old black lines fade away over time.
+        ctx.fillStyle = "rgba(255, 255, 255, 0.05)"; 
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        if (currentNodeId && targetNodeId) {
+            const start = nodes[currentNodeId];
+            const end = nodes[targetNodeId];
+
+            // Calculate current interpolated position
+            const curX = start.x + (end.x - start.x) * progress;
+            const curY = start.y + (end.y - start.y) * progress;
+
+            // Draw the "Radar Pulse" (The moving head)
+            ctx.beginPath();
+            ctx.arc(curX, curY, 3, 0, Math.PI * 2);
+            ctx.fillStyle = "black";
+            ctx.fill();
+
+            // Draw the line segment for this step
+            ctx.beginPath();
+            ctx.moveTo(start.x + (end.x - start.x) * (progress - 0.1), start.y + (end.y - start.y) * (progress - 0.1));
+            ctx.lineTo(curX, curY);
+            ctx.strokeStyle = "black";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Advance progress (Speed control)
+            progress += 0.05;
+
+            if (progress >= 1) {
+                currentNodeId = targetNodeId;
+                pickNextTarget();
+            }
+        }
+
+        requestAnimationFrame(animate);
+    }
+</script>
+
+</body>
+</html>
