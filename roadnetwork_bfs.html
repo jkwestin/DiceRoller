@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>OSM BFS Network Explorer</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #fff; font-family: 'Courier New', monospace; }
+        #controls { 
+            position: absolute; top: 15px; left: 15px; z-index: 10; 
+            background: #fff; padding: 15px; border: 2px solid #000; 
+        }
+        input { border: 1px solid #000; padding: 8px; width: 180px; outline: none; }
+        button { cursor: pointer; background: #000; color: #fff; border: none; padding: 8px 15px; font-weight: bold; }
+        #status { font-size: 10px; margin-top: 8px; color: #999; }
+        canvas { position: absolute; top: 0; left: 0; }
+    </style>
+</head>
+<body>
+
+<div id="controls">
+    <strong>BFS_NETWORK_EXPANSION</strong><br><br>
+    <input type="text" id="cityInput" placeholder="CITY NAME" onkeyup="if(event.key==='Enter') loadCity()">
+    <button onclick="loadCity()">EXPAND</button>
+    <div id="status">IDLE_WAITING</div>
+</div>
+<canvas id="bgCanvas"></canvas>
+<canvas id="fgCanvas"></canvas>
+
+<script>
+    const bgCanvas = document.getElementById('bgCanvas');
+    const fgCanvas = document.getElementById('fgCanvas');
+    const bgCtx = bgCanvas.getContext('2d');
+    const fgCtx = fgCanvas.getContext('2d');
+    
+    let graph = {}, nodes = {}, isRunning = false;
+    let queue = [];
+    let visitedNodes = new Set();
+    let visitedEdges = new Set(); // To avoid painting the same road twice
+
+    function resize() {
+        bgCanvas.width = fgCanvas.width = window.innerWidth;
+        bgCanvas.height = fgCanvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    async function loadCity() {
+        const city = document.getElementById('cityInput').value;
+        if (!city) return;
+        
+        // Reset State
+        isRunning = false;
+        queue = [];
+        visitedNodes.clear();
+        visitedEdges.clear();
+        fgCtx.clearRect(0, 0, fgCanvas.width, fgCanvas.height);
+        document.getElementById('status').innerText = "CALCULATING_COORDINATES...";
+
+        try {
+            const geo = await fetch(`https://nominatim.openstreetmap.org/search?city=${encodeURIComponent(city)}&format=json&limit=1`).then(r => r.json());
+            if (!geo.length) throw new Error("LOC_NOT_FOUND");
+
+            const b = geo[0].boundingbox;
+            // Fetching roads
+            const query = `[out:json][timeout:25];way["highway"~"primary|secondary|tertiary|residential"](${b[0]},${b[2]},${b[1]},${b[3]});(._;>;);out skel;`;
+
+            document.getElementById('status').innerText = "DOWNLOADING_GEOMETRY...";
+            const osmRes = await fetch(`https://overpass-api.de/api/interpreter`, {
+                method: 'POST',
+                body: `data=${encodeURIComponent(query)}`
+            });
+            const data = await osmRes.json();
+            
+            setupNetwork(data, b);
+        } catch (e) {
+            document.getElementById('status').innerText = "ERR: " + e.message;
+        }
+    }
+
+    function setupNetwork(data, b) {
+        graph = {}; nodes = {};
+        const [minLat, maxLat, minLon, maxLon] = [parseFloat(b[0]), parseFloat(b[1]), parseFloat(b[2]), parseFloat(b[3])];
+
+        data.elements.forEach(el => {
+            if (el.type === 'node') {
+                nodes[el.id] = {
+                    x: ((el.lon - minLon) / (maxLon - minLon)) * bgCanvas.width,
+                    y: (1 - (el.lat - minLat) / (maxLat - minLat)) * bgCanvas.height
+                };
+            }
+        });
+
+        bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+        bgCtx.strokeStyle = "#f2f2f2"; // Very light grey network
+        bgCtx.lineWidth = 1;
+        bgCtx.beginPath();
+
+        data.elements.forEach(el => {
+            if (el.type === 'way' && el.nodes) {
+                for (let i = 0; i < el.nodes.length - 1; i++) {
+                    const u = el.nodes[i], v = el.nodes[i+1];
+                    if (nodes[u] && nodes[v]) {
+                        bgCtx.moveTo(nodes[u].x, nodes[u].y);
+                        bgCtx.lineTo(nodes[v].x, nodes[v].y);
+                        if (!graph[u]) graph[u] = [];
+                        if (!graph[v]) graph[v] = [];
+                        graph[u].push(v); graph[v].push(u);
+                    }
+                }
+            }
+        });
+        bgCtx.stroke();
+
+        const ids = Object.keys(graph);
+        if (ids.length) {
+            // BFS Start: pick a random central node
+            const startId = ids[Math.floor(ids.length / 2)];
+            queue.push(startId);
+            visitedNodes.add(startId);
+            
+            isRunning = true;
+            document.getElementById('status').innerText = "BFS_EXPANSION_ACTIVE";
+            requestAnimationFrame(animateBFS);
+        }
+    }
+
+    function animateBFS() {
+        if (!isRunning || queue.length === 0) {
+            if (queue.length === 0) document.getElementById('status').innerText = "SCAN_COMPLETE";
+            return;
+        }
+
+        // SPEED MULTIPLIER: Process X nodes per frame
+        const nodesPerFrame = 5; 
+        
+        fgCtx.strokeStyle = "#000";
+        fgCtx.lineWidth = 2.5; // Wider black links
+        fgCtx.lineCap = "round";
+
+        for (let i = 0; i < nodesPerFrame; i++) {
+            if (queue.length === 0) break;
+
+            const u = queue.shift();
+            const neighbors = graph[u] || [];
+
+            neighbors.forEach(v => {
+                // Create a unique key for the edge to avoid double painting
+                const edgeKey = u < v ? `${u}-${v}` : `${v}-${u}`;
+                
+                if (!visitedEdges.has(edgeKey)) {
+                    // Paint the link black permanently on the foreground
+                    fgCtx.beginPath();
+                    fgCtx.moveTo(nodes[u].x, nodes[u].y);
+                    fgCtx.lineTo(nodes[v].x, nodes[v].y);
+                    fgCtx.stroke();
+                    visitedEdges.add(edgeKey);
+                }
+
+                if (!visitedNodes.has(v)) {
+                    visitedNodes.add(v);
+                    queue.push(v);
+                }
+            });
+        }
+
+        requestAnimationFrame(animateBFS);
+    }
+</script>
+</body>
+</html>
