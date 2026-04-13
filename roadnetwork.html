@@ -41,7 +41,53 @@
         canvas.height = window.innerHeight;
     });
 
+
     async function loadCity() {
+    const cityName = document.getElementById('cityInput').value;
+    console.log("Starting scan for:", cityName);
+    
+    try {
+        const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?city=${encodeURIComponent(cityName)}&format=json&limit=1`);
+        const geoData = await geoRes.json();
+        
+        if (!geoData.length) {
+            alert("Nominatim could not find this city.");
+            return;
+        }
+        console.log("City found at:", geoData[0].lat, geoData[0].lon);
+
+        const bbox = geoData[0].boundingbox;
+        const query = `[out:json][timeout:25];way["highway"](${bbox[0]},${bbox[2]},${bbox[1]},${bbox[3]});(._;>;);out body;`;
+        
+        console.log("Sending query to Overpass...");
+        const osmRes = await fetch(`https://overpass-api.de/api/interpreter`, {
+            method: 'POST',
+            body: `data=${encodeURIComponent(query)}`
+        });
+
+        if (!osmRes.ok) {
+            const err = await osmRes.text();
+            console.error("Overpass Error:", err);
+            alert("Overpass API is angry. See console.");
+            return;
+        }
+
+        const osmData = await osmRes.json();
+        console.log("Data received! Elements:", osmData.elements.length);
+
+        if (osmData.elements.length === 0) {
+            alert("No roads found in this bounding box.");
+            return;
+        }
+
+        processData(osmData, bbox);
+    } catch (e) {
+        console.error("Script crashed:", e);
+        alert("Check console for: " + e.message);
+    }
+}
+    
+    async function loadCity1() {
         const cityName = document.getElementById('cityInput').value;
         const status = document.getElementById('status');
         if (!cityName) return;
